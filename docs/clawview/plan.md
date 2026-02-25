@@ -285,3 +285,28 @@
 | Dashboard 需要只突出关键信息，其余放侧边栏/子模块 | P1 | 增加“首屏突出要素 4 类”规则，并在计划中补充对应冻结任务；首页与子模块边界进一步收紧 | B、D、7.1 | 已处理 |
 | 文档结构不清（首页与侧边栏内容混在一起） | P1 | 重写 PRD IA 章节为“首页模块清单 + 侧边栏详情清单 + 边界规则”，并在 plan 增加首页固定模块清单任务 | B、D、PRD-7 | 已处理 |
 | 首页调用次数窗口不明确（周/日/月混淆） | P1 | 明确首页固定双口径：Rolling 24h（主）+ Tokyo 今日（辅）；周/月仅在 API 详情页展示，并补充口径冻结任务 | B、D、PRD-7 | 已处理 |
+
+---
+
+### L. PRD 字段与 Plan 指标映射（可采集性对齐）
+> 目的：确保“文档里写了的字段”在执行计划里有对应采集路径，避免展示需求与采集能力脱节。
+
+| Plan 指标（P0-Core） | PRD 对应展示项 | 口径窗口 | 采集类型 | 首发要求 |
+|---|---|---|---|---|
+| service_uptime_ratio_24h | 运行状态 / 连续运行时长 | 24h + now | Ready | 必须可用 |
+| service_status_now | 运行状态 | now | Ready | 必须可用 |
+| trigger_total_24h | 24h 触发总次数 | 24h | Ready | 必须可用 |
+| trigger_storm_task_top5_5m | 触发最多任务 Top5（风险视角） | 5m | Derived | 必须可用 |
+| api_call_total_24h | API 调用次数（首页主口径） | 24h | Ready | 必须可用 |
+| api_error_rate_24h | API 错误率 | 24h | Derived | 必须可用 |
+| api_429_ratio_24h | 限速比例（429） | 24h | Derived | 必须可用 |
+| endpoint_group_top5_calls_24h | API 分组 TopN | 24h | Derived | 必须可用 |
+| error_fingerprint_top10_24h | 高频错误 Top10 | 24h | Derived | 必须可用 |
+| restart_unexpected_count_24h | 异常重启次数 | 24h | Derived | 必须可用 |
+| data_freshness_delay_min | 数据更新时间/延迟状态 | now | Ready | 必须可用 |
+| p0_core_coverage_ratio | 数据完整性状态（覆盖率） | 24h | Derived | >=98% |
+
+**对齐规则（执行门禁）**
+1. PRD 首页字段必须能映射到表中 Plan 指标或其可追溯派生指标。
+2. 映射不到的数据项不得作为首发阻塞项。
+3. 任一 P0-Core 指标掉到 Gap 状态，首发自动阻塞。

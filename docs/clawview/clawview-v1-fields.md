@@ -7,6 +7,15 @@
 - 辅时间窗口：**Asia/Tokyo 当日**
 - 刷新目标：看板数据延迟 **≤ 15 分钟**
 
+### 0.1 字段可采集性门禁（上线前必须过）
+- 每个字段必须标注采集状态：
+  - **Ready**：已有稳定数据源，可直接展示
+  - **Derived**：可由现有事件聚合得到
+  - **Gap**：当前没有稳定来源（禁止伪造）
+- 首页字段要求：仅允许 `Ready/Derived`，不允许 `Gap` 直接上首页。
+- `Gap` 字段展示规则：显示 `--` +「数据未接入」，并记录到缺口清单。
+- 首发上线门槛：P0-Core 字段 `Ready/Derived` 覆盖率 >= 98%。
+
 ---
 
 ## 1. P0 必选字段（首版必须展示）
@@ -57,6 +66,22 @@
 32. **数据更新时间**
 33. **数据完整性状态**（完整 / 部分缺失 / 延迟）
 34. **统计口径标记**（Rolling 24h / Tokyo 当日）
+
+### 1.1 P0-Core 可采集性对照（与 Plan 对齐）
+| P0-Core 指标 | 对应展示字段 | 预期数据来源 | 采集状态 |
+|---|---|---|---|
+| service_uptime_ratio_24h | 运行状态 / 连续运行时长 | 运行时心跳 + 服务存活事件 | Ready |
+| service_status_now | 运行状态 | 健康检查事件 | Ready |
+| trigger_total_24h | 24h 触发总次数 | cron/job 触发事件 | Ready |
+| trigger_storm_task_top5_5m | 触发最多任务 Top5（5m 风险视角） | cron/job 触发事件聚合 | Derived |
+| api_call_total_24h | 24h 调用次数 | provider 请求日志 | Ready |
+| api_error_rate_24h | 错误率 | provider 请求日志聚合 | Derived |
+| api_429_ratio_24h | 限速比例（429） | 429 + 等价限流错误归一化 | Derived |
+| endpoint_group_top5_calls_24h | API 分组 TopN | endpoint_group 映射字典 + 请求日志 | Derived |
+| error_fingerprint_top10_24h | 高频错误 Top10 | 错误日志 + 指纹归一化 | Derived |
+| restart_unexpected_count_24h | 异常重启数 | 进程退出码/崩溃证据 + 重启分类规则 | Derived |
+| data_freshness_delay_min | 数据更新时间/延迟状态 | 最新快照时间戳 | Ready |
+| p0_core_coverage_ratio | 数据完整性状态 | 字段填充率计算 | Derived |
 
 ---
 
