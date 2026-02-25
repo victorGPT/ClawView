@@ -292,20 +292,22 @@
 ### L. PRD 字段与 Plan 指标映射（可采集性对齐）
 > 目的：确保“文档里写了的字段”在执行计划里有对应采集路径，避免展示需求与采集能力脱节。
 
-| Plan 指标（P0-Core） | PRD 对应展示项 | 口径窗口 | 采集类型 | Probe v0 实测状态 | 首发要求 |
+| Plan 指标（P0-Core） | PRD 对应展示项 | 口径窗口 | 采集类型 | Probe v1 实测状态 | 首发要求 |
 |---|---|---|---|---|---|
-| service_uptime_ratio_24h | 运行状态 / 连续运行时长 | 24h + now | 心跳聚合 | Gap | 必须可用 |
+| service_uptime_ratio_24h | 运行状态 / 连续运行时长 | 24h + now | 心跳/进程时长聚合 | Derived | 必须可用 |
 | service_status_now | 运行状态 | now | 健康检查 | Ready | 必须可用 |
 | trigger_total_24h | 24h 触发总次数 | 24h | 触发事件统计 | Ready | 必须可用 |
-| trigger_storm_task_top5_5m | 触发最多任务 Top5（风险视角） | 5m | 触发事件聚合 | Gap | 必须可用 |
-| api_call_total_24h | API 调用次数（首页主口径） | 24h | 请求日志聚合 | Gap | 必须可用 |
-| api_error_rate_24h | API 错误率 | 24h | 请求日志聚合 | Gap | 必须可用 |
-| api_429_ratio_24h | 限速比例（429） | 24h | 限流归一化 | Gap | 必须可用 |
-| endpoint_group_top5_calls_24h | API 分组 TopN | 24h | 分组字典聚合 | Gap | 必须可用 |
-| error_fingerprint_top10_24h | 高频错误 Top10 | 24h | 错误指纹聚合 | Derived（当前 Top8） | 必须可用 |
-| restart_unexpected_count_24h | 异常重启次数 | 24h | 重启分类聚合 | Gap | 必须可用 |
+| trigger_storm_task_top5_5m | 触发最多任务 Top5（风险视角） | 5m | 触发事件聚合 | Derived | 必须可用 |
+| api_call_total_24h | API 调用次数（首页主口径） | 24h | 请求日志聚合 | Gap（不稳定） | 必须可用 |
+| api_error_rate_24h | API 错误率 | 24h | 请求日志聚合 | Gap（不稳定） | 必须可用 |
+| api_429_ratio_24h | 限速比例（429） | 24h | 限流归一化 | Gap（不稳定） | 必须可用 |
+| endpoint_group_top5_calls_24h | API 分组 TopN | 24h | 分组字典聚合 | Gap（不稳定） | 必须可用 |
+| error_fingerprint_top10_24h | 高频错误 Top10 | 24h | 错误指纹聚合 | Derived | 必须可用 |
+| restart_unexpected_count_24h | 异常重启次数 | 24h | 重启分类聚合 | Derived | 必须可用 |
 | data_freshness_delay_min | 数据更新时间/延迟状态 | now | 最新快照时间 | Derived | 必须可用 |
-| p0_core_coverage_ratio | 数据完整性状态（覆盖率） | 24h | 填充率计算 | Gap | >=98% |
+| p0_core_coverage_ratio | 数据完整性状态（覆盖率） | 24h | 填充率计算 | Derived | >=98% |
+
+> 最新 Probe v1 单次实测：`p0_core_coverage_ratio ≈ 0.636`，距离首发门槛（>=0.98）仍有缺口，主要在 API 聚合稳定性。
 
 **对齐规则（执行门禁）**
 1. PRD 首页字段必须能映射到表中 Plan 指标或其可追溯派生指标。

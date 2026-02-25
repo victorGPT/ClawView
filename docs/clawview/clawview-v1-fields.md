@@ -68,22 +68,24 @@
 34. **统计口径标记**（Rolling 24h / Tokyo 当日）
 
 ### 1.1 P0-Core 可采集性对照（与 Plan 对齐）
-> 口径说明：以下状态基于 `~/.openclaw/clawview-probe/probe.mjs --once` 当前实测能力（Probe v0）。
+> 口径说明：以下状态基于 `~/.openclaw/clawview-probe/probe.mjs --once` 当前实测能力（Probe v1）。
 
 | P0-Core 指标 | 对应展示字段 | 预期数据来源 | 采集状态 |
 |---|---|---|---|
-| service_uptime_ratio_24h | 运行状态 / 连续运行时长 | 运行时心跳 + 服务存活事件 | Gap |
+| service_uptime_ratio_24h | 运行状态 / 连续运行时长 | 运行时心跳 + 服务存活事件 | Derived |
 | service_status_now | 运行状态 | 健康检查事件 | Ready |
 | trigger_total_24h | 24h 触发总次数 | cron/job 触发事件 | Ready |
-| trigger_storm_task_top5_5m | 触发最多任务 Top5（5m 风险视角） | cron/job 触发事件聚合 | Gap |
-| api_call_total_24h | 24h 调用次数 | provider 请求日志 | Gap |
-| api_error_rate_24h | 错误率 | provider 请求日志聚合 | Gap |
-| api_429_ratio_24h | 限速比例（429） | 429 + 等价限流错误归一化 | Gap |
-| endpoint_group_top5_calls_24h | API 分组 TopN | endpoint_group 映射字典 + 请求日志 | Gap |
-| error_fingerprint_top10_24h | 高频错误 Top10 | 错误日志 + 指纹归一化 | Derived（当前为 Top8） |
-| restart_unexpected_count_24h | 异常重启数 | 进程退出码/崩溃证据 + 重启分类规则 | Gap |
+| trigger_storm_task_top5_5m | 触发最多任务 Top5（5m 风险视角） | cron/job 触发事件聚合 | Derived |
+| api_call_total_24h | 24h 调用次数 | provider 请求日志（当前通过日志推断） | Gap（不稳定） |
+| api_error_rate_24h | 错误率 | provider 请求日志聚合（当前通过日志推断） | Gap（不稳定） |
+| api_429_ratio_24h | 限速比例（429） | 429 + 等价限流错误归一化（当前通过日志推断） | Gap（不稳定） |
+| endpoint_group_top5_calls_24h | API 分组 TopN | endpoint_group 映射字典 + 请求日志 | Gap（不稳定） |
+| error_fingerprint_top10_24h | 高频错误 Top10 | 错误日志 + 指纹归一化 | Derived |
+| restart_unexpected_count_24h | 异常重启数 | 进程退出码/崩溃证据 + 重启分类规则 | Derived |
 | data_freshness_delay_min | 数据更新时间/延迟状态 | 最新快照时间戳 | Derived |
-| p0_core_coverage_ratio | 数据完整性状态 | 字段填充率计算 | Gap |
+| p0_core_coverage_ratio | 数据完整性状态 | 字段填充率计算 | Derived |
+
+> 最新一次 Probe v1 实测：`p0_core_coverage_ratio ≈ 0.636`（主要缺口集中在 API 聚合链路稳定性）。
 
 ---
 
