@@ -10,6 +10,8 @@ Use Hook-triggered sampling only (no heartbeat dependency), with minimal couplin
 - Hook state: `~/.openclaw/clawview-probe/hook-trigger-state.json`
 - API cursor state: `~/.openclaw/clawview-probe/api-cursor.json`
 - API incremental store: `~/.openclaw/clawview-probe/api-events.jsonl`
+- Outbound sync script: `~/.openclaw/clawview-probe/sync-outbound.mjs`
+- Outbound sync cursor: `~/.openclaw/clawview-probe/sync-cursor.json`
 
 ## Trigger events
 - `gateway:startup`
@@ -17,8 +19,9 @@ Use Hook-triggered sampling only (no heartbeat dependency), with minimal couplin
 
 ## Behavior
 1. On trigger, handler checks debounce window (default 45s via `CLAWVIEW_PROBE_DEBOUNCE_MS`).
-2. If accepted, handler runs:
+2. If accepted, handler runs probe once, and then (optional) outbound sync once:
    - `node ~/.openclaw/clawview-probe/probe.mjs --once --out-dir ~/.openclaw/clawview-probe`
+   - `node ~/.openclaw/clawview-probe/sync-outbound.mjs --once --out-dir ~/.openclaw/clawview-probe`
 3. Probe performs cursor-based API log extraction:
    - reads gateway logs
    - extracts API-like lines
@@ -36,6 +39,15 @@ Use Hook-triggered sampling only (no heartbeat dependency), with minimal couplin
 - Whitelist-only fields for outbound sync.
 - Local redaction before any network send.
 - TLS required for transport.
+- Optional HMAC signature for payload integrity (`CLAWVIEW_SYNC_HMAC_SECRET`).
+
+## Outbound env switches
+- `CLAWVIEW_SYNC_ENABLED` (default `1`): set `0` to disable outbound sync call.
+- `CLAWVIEW_SYNC_URL`: backend ingest URL (when unset, sync runs no-op).
+- `CLAWVIEW_SYNC_API_KEY`: optional bearer token.
+- `CLAWVIEW_SYNC_HMAC_SECRET`: optional HMAC-SHA256 signing secret.
+- `CLAWVIEW_TENANT_ID` / `CLAWVIEW_PROJECT_ID`: routing labels.
+- `CLAWVIEW_SYNC_BATCH_SIZE` (default `200`): max API events per flush.
 
 ## Current caveat
 API metrics are currently best-effort and may be unstable depending on available log signals; keep marked as Gap where needed.
