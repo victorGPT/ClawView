@@ -8,6 +8,8 @@ Use Hook-triggered sampling only (no heartbeat dependency), with minimal couplin
 - Hook handler: `~/.openclaw/hooks/clawview-probe/handler.ts`
 - Probe script: `~/.openclaw/clawview-probe/probe.mjs`
 - Hook state: `~/.openclaw/clawview-probe/hook-trigger-state.json`
+- API cursor state: `~/.openclaw/clawview-probe/api-cursor.json`
+- API incremental store: `~/.openclaw/clawview-probe/api-events.jsonl`
 
 ## Trigger events
 - `gateway:startup`
@@ -17,7 +19,12 @@ Use Hook-triggered sampling only (no heartbeat dependency), with minimal couplin
 1. On trigger, handler checks debounce window (default 45s via `CLAWVIEW_PROBE_DEBOUNCE_MS`).
 2. If accepted, handler runs:
    - `node ~/.openclaw/clawview-probe/probe.mjs --once --out-dir ~/.openclaw/clawview-probe`
-3. Probe appends a JSON snapshot to:
+3. Probe performs cursor-based API log extraction:
+   - reads gateway logs
+   - extracts API-like lines
+   - dedupes by stable key (`time+provider+group+status+fingerprint`)
+   - appends incremental events to `api-events.jsonl`
+4. Probe appends a JSON snapshot to:
    - `~/.openclaw/clawview-probe/snapshots-YYYY-MM-DD.jsonl`
 
 ## Decoupling rules
