@@ -250,17 +250,38 @@ async function coreHandle(requestLike) {
   const method = (requestLike.method || 'GET').toUpperCase();
   if (method !== 'GET') return json(405, { ok: false, error: 'Method not allowed' });
 
-  const baseUrl = process.env.INSFORGE_BASE_URL || process.env.CLAWVIEW_INSFORGE_BASE_URL;
-  const apiKey = process.env.INSFORGE_SERVICE_ROLE_KEY || process.env.INSFORGE_ANON_KEY || process.env.CLAWVIEW_SYNC_API_KEY;
+  const url = new URL(requestLike.url || 'http://local');
+  const fromHeaderAuth =
+    requestLike.headers?.authorization ||
+    requestLike.headers?.Authorization ||
+    requestLike.headers?.get?.('authorization') ||
+    requestLike.headers?.get?.('Authorization') ||
+    '';
+  const fromHeaderApiKey =
+    requestLike.headers?.apikey ||
+    requestLike.headers?.get?.('apikey') ||
+    '';
+  const bearerMatch = String(fromHeaderAuth).match(/^Bearer\s+(.+)$/i);
+
+  const baseUrl =
+    process.env.INSFORGE_BASE_URL ||
+    process.env.CLAWVIEW_INSFORGE_BASE_URL ||
+    `${url.protocol}//${url.host}`;
+
+  const apiKey =
+    process.env.INSFORGE_SERVICE_ROLE_KEY ||
+    process.env.INSFORGE_ANON_KEY ||
+    process.env.CLAWVIEW_SYNC_API_KEY ||
+    (bearerMatch ? bearerMatch[1] : '') ||
+    String(fromHeaderApiKey || '');
 
   if (!baseUrl || !apiKey) {
-    return json(500, {
+    return json(401, {
       ok: false,
-      error: 'Missing INSFORGE_BASE_URL or INSFORGE_SERVICE_ROLE_KEY',
+      error: 'Missing API key in env or request headers',
     });
   }
 
-  const url = new URL(requestLike.url || 'http://local');
   const profile = url.searchParams.get('profile') === 'mobile' ? 'mobile' : 'desktop';
   const tenantId = url.searchParams.get('tenant_id') || process.env.CLAWVIEW_TENANT_ID || 'default';
   const projectId = url.searchParams.get('project_id') || process.env.CLAWVIEW_PROJECT_ID || 'openclaw';
