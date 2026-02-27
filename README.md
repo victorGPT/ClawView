@@ -16,6 +16,8 @@ Display-only runtime observability board for OpenClaw.
 - Live status output (generated): `runtime/clawview-probe/p0-core-live-status.json`
 - Hook manifest: `runtime/hooks/clawview-probe/HOOK.md`
 - Hook handler: `runtime/hooks/clawview-probe/handler.ts`
+- Dashboard function draft: `runtime/insforge-functions/clawview-dashboard/index.mjs`
+- Dashboard function notes: `runtime/insforge-functions/clawview-dashboard/README.md`
 
 ## Principles
 - Display-only (no reverse control)

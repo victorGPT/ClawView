@@ -65,3 +65,12 @@ VITE_INSFORGE_ANON_KEY=<single-key>
 1. 后端新增并部署 `clawview-dashboard`（或实现 `/api/v1/clawview/dashboard`）
 2. 返回结构按 `clawview-v1-api-contract.md`
 3. 前端无需新增任何 key，即可切真数据
+
+
+## 6. 后端函数实现位置（已补）
+
+已在仓库补充函数实现稿：
+- `/Users/farmer/.openclaw/workspace/repos-main/ClawView/runtime/insforge-functions/clawview-dashboard/index.mjs`
+- `/Users/farmer/.openclaw/workspace/repos-main/ClawView/runtime/insforge-functions/clawview-dashboard/README.md`
+
+该函数返回 `clawview-v1-api-contract` 所需结构，并在缺失数据时输出 Gap 指标，保证前端可继续渲染。
