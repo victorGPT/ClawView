@@ -1,252 +1,330 @@
-import { insforge } from '../lib/insforge';
 import type { DashboardData, MetricValue, Readiness, RiskLevel } from '../types/dashboard';
 
-type CrawlRunRow = {
-  site_id: string;
-  status: string;
-  started_at: string;
-  finished_at: string | null;
-  error: string | null;
-  items_found: number;
-  items_inserted: number;
-};
+const baseUrl = import.meta.env.VITE_INSFORGE_BASE_URL as string | undefined;
+const anonKey = import.meta.env.VITE_INSFORGE_ANON_KEY as string | undefined;
 
-type SiteStateRow = {
-  site_id: string;
-  next_run_at: string;
-  last_run_at: string | null;
-  last_success_at: string | null;
-  last_error: string | null;
-  consecutive_failures: number;
-};
-
-type CrawlItemRow = {
-  source: string;
-  status: string | null;
-  updated_at: string;
-};
-
+const DASHBOARD_PATHS = ['/api/v1/clawview/dashboard', '/functions/clawview-dashboard'] as const;
 const GAP_NOTE = '数据未接入';
 
-function metric<T>(readiness: Readiness, value: T, display: string, note?: string): MetricValue<T> {
-  return { readiness, value, display, note };
+type Dict = Record<string, unknown>;
+
+function isObj(v: unknown): v is Dict {
+  return typeof v === 'object' && v !== null;
+}
+
+function readStr(v: unknown, fallback = '--'): string {
+  return typeof v === 'string' && v.length > 0 ? v : fallback;
+}
+
+function readNum(v: unknown, fallback = 0): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+}
+
+function normalizeReadiness(v: unknown): Readiness {
+  if (v === 'Ready' || v === 'Derived' || v === 'Gap') return v;
+  if (v === 'ready') return 'Ready';
+  if (v === 'derived') return 'Derived';
+  if (v === 'gap') return 'Gap';
+  return 'Derived';
+}
+
+function parseMetric<T>(
+  input: unknown,
+  fallback: MetricValue<T>,
+  parseValue: (raw: unknown) => T,
+): MetricValue<T> {
+  if (!isObj(input)) return fallback;
+
+  return {
+    readiness: normalizeReadiness(input.readiness),
+    value: input.value !== undefined ? parseValue(input.value) : fallback.value,
+    display: typeof input.display === 'string' && input.display ? input.display : fallback.display,
+    note: typeof input.note === 'string' ? input.note : fallback.note,
+  };
 }
 
 function metricGap(): MetricValue<null> {
-  return { readiness: 'Gap', value: null, display: '--', note: GAP_NOTE };
+  return {
+    readiness: 'Gap',
+    value: null,
+    display: '--',
+    note: GAP_NOTE,
+  };
 }
 
-function formatNumber(value: number): string {
-  return value.toLocaleString('en-US');
+function pickProfile(): 'desktop' | 'mobile' {
+  if (typeof window === 'undefined') return 'desktop';
+  return window.innerWidth < 768 ? 'mobile' : 'desktop';
 }
 
-function formatTokyo(value: string | null): string {
-  if (!value) return '--';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '--';
+function parseSeries(input: unknown): number[] {
+  if (Array.isArray(input) && input.every((x) => typeof x === 'number')) {
+    return input.map((x) => readNum(x, 0));
+  }
 
-  const parts = new Intl.DateTimeFormat('zh-CN', {
-    timeZone: 'Asia/Tokyo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  })
-    .formatToParts(date)
-    .reduce<Record<string, string>>((acc, part) => {
-      if (part.type !== 'literal') acc[part.type] = part.value;
-      return acc;
-    }, {});
+  if (Array.isArray(input)) {
+    const values = input
+      .map((row) => (isObj(row) ? readNum(row.value, NaN) : NaN))
+      .filter((x) => Number.isFinite(x));
+    return values.length > 0 ? values : new Array<number>(10).fill(0);
+  }
 
-  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+  if (isObj(input) && Array.isArray(input.series)) {
+    return parseSeries(input.series);
+  }
+
+  return new Array<number>(10).fill(0);
 }
 
-function getTokyoDayStartIso(now = new Date()): string {
-  const tokyoNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
-  tokyoNow.setHours(0, 0, 0, 0);
-  const offsetMs = tokyoNow.getTime() - now.getTime();
-  return new Date(tokyoNow.getTime() - offsetMs).toISOString();
-}
-
-function buildTenBins(timestamps: string[], nowMs: number): number[] {
-  const bins = new Array<number>(10).fill(0);
-  const windowMs = 24 * 60 * 60 * 1000;
-  const startMs = nowMs - windowMs;
-  const step = windowMs / 10;
-
-  timestamps.forEach((time) => {
-    const t = new Date(time).getTime();
-    if (Number.isNaN(t) || t < startMs || t > nowMs) return;
-    const idx = Math.min(9, Math.floor((t - startMs) / step));
-    bins[idx] += 1;
-  });
-
-  return bins;
-}
-
-function toRiskLevel(failures: number, hasError: boolean): RiskLevel {
-  if (failures >= 3) return 'red';
-  if (failures >= 1 || hasError) return 'yellow';
+function toRiskLevel(v: unknown): RiskLevel {
+  if (v === 'red' || v === 'yellow' || v === 'green') return v;
   return 'green';
 }
 
-export async function loadDashboardDataFromInsforge(): Promise<DashboardData | null> {
-  if (!insforge) {
-    return null;
-  }
+function toNumberOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
 
-  const now = new Date();
-  const nowIso = now.toISOString();
-  const last24hIso = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
-  const tokyoDayStartIso = getTokyoDayStartIso(now);
+function toStringOrNull(v: unknown): string | null {
+  return typeof v === 'string' ? v : null;
+}
 
-  const [runs24Res, runsTokyoRes, siteStateRes, itemRes] = await Promise.all([
-    insforge.database
-      .from('crawl_runs')
-      .select('site_id,status,started_at,finished_at,error,items_found,items_inserted')
-      .gte('started_at', last24hIso)
-      .order('started_at', { ascending: true })
-      .limit(2000),
-    insforge.database
-      .from('crawl_runs')
-      .select('site_id,status,started_at')
-      .gte('started_at', tokyoDayStartIso)
-      .order('started_at', { ascending: true })
-      .limit(2000),
-    insforge.database
-      .from('site_state')
-      .select('site_id,next_run_at,last_run_at,last_success_at,last_error,consecutive_failures')
-      .order('site_id', { ascending: true })
-      .limit(1000),
-    insforge.database
-      .from('crawl_items')
-      .select('source,status,updated_at')
-      .order('updated_at', { ascending: false })
-      .limit(5000),
-  ]);
+function toIntegrity(v: unknown): 'full' | 'partial' | 'delayed' {
+  return v === 'full' || v === 'partial' || v === 'delayed' ? v : 'partial';
+}
 
-  if (runs24Res.error || runsTokyoRes.error || siteStateRes.error || itemRes.error) {
-    return null;
-  }
+function toServiceStatus(v: unknown): 'running' | 'degraded' | 'down' {
+  return v === 'running' || v === 'degraded' || v === 'down' ? v : 'running';
+}
 
-  const runs24 = (runs24Res.data ?? []) as CrawlRunRow[];
-  const runsTokyo = (runsTokyoRes.data ?? []) as Array<Pick<CrawlRunRow, 'site_id' | 'status' | 'started_at'>>;
-  const siteState = (siteStateRes.data ?? []) as SiteStateRow[];
-  const items = (itemRes.data ?? []) as CrawlItemRow[];
+function mapDashboardContract(raw: unknown): DashboardData | null {
+  if (!isObj(raw)) return null;
 
-  const runFailures24 = runs24.filter((row) => row.status !== 'success');
-  const latestFailureRun = [...runFailures24].sort((a, b) => +new Date(b.started_at) - +new Date(a.started_at))[0];
-  const activeErrorCount = siteState.filter((row) => row.consecutive_failures > 0 || Boolean(row.last_error)).length;
+  const meta = isObj(raw.meta) ? raw.meta : {};
+  const health = isObj(raw.health_overview)
+    ? raw.health_overview
+    : isObj(raw.healthOverview)
+      ? raw.healthOverview
+      : {};
+  const trends = isObj(raw.trends) ? raw.trends : {};
+  const skill = isObj(raw.skill_summary)
+    ? raw.skill_summary
+    : isObj(raw.skillSummary)
+      ? raw.skillSummary
+      : {};
+  const cron = isObj(raw.cron_summary)
+    ? raw.cron_summary
+    : isObj(raw.cronSummary)
+      ? raw.cronSummary
+      : {};
+  const api = isObj(raw.api_summary)
+    ? raw.api_summary
+    : isObj(raw.apiSummary)
+      ? raw.apiSummary
+      : {};
 
-  const latestDataTs = [
-    ...runs24.map((row) => row.finished_at ?? row.started_at),
-    ...items.map((row) => row.updated_at),
-    ...siteState.map((row) => row.last_run_at ?? row.last_success_at ?? row.next_run_at),
-  ]
-    .map((value) => +new Date(value))
-    .filter((value) => Number.isFinite(value))
-    .sort((a, b) => b - a)[0];
+  const skillTop: Array<{ name: string; calls24h: number }> = Array.isArray(skill.top)
+    ? skill.top
+        .map((row) => {
+          if (!isObj(row)) return null;
+          return {
+            name: readStr(row.skill_name ?? row.name, '--'),
+            calls24h: readNum(row.calls_24h ?? row.calls24h, 0),
+          };
+        })
+        .filter((x): x is { name: string; calls24h: number } => x !== null)
+    : [];
 
-  const freshnessMin = latestDataTs ? Math.max(0, Math.round((now.getTime() - latestDataTs) / 60000)) : 0;
+  const riskSourceMaybe = isObj(cron.trigger_storm_task_top5_5m)
+    ? (cron.trigger_storm_task_top5_5m as Dict).top
+    : cron.riskTop;
 
-  const sourceCounter = new Map<string, number>();
-  items.forEach((item) => {
-    const key = item.source || 'unknown';
-    sourceCounter.set(key, (sourceCounter.get(key) ?? 0) + 1);
-  });
+  const riskTop: Array<{ name: string; count: number; risk: RiskLevel }> = Array.isArray(riskSourceMaybe)
+    ? riskSourceMaybe
+        .map((row) => {
+          if (!isObj(row)) return null;
+          return {
+            name: readStr(row.task_name ?? row.name, '--'),
+            count: readNum(row.count, 0),
+            risk: toRiskLevel(row.risk_level ?? row.risk),
+          };
+        })
+        .filter((x): x is { name: string; count: number; risk: RiskLevel } => x !== null)
+    : [];
 
-  const skillTop = [...sourceCounter.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 6)
-    .map(([name, count]) => ({ name, calls24h: count }));
+  const endpointSourceMaybe = isObj(api.endpoint_group_top)
+    ? (api.endpoint_group_top as Dict).top
+    : api.endpointTop;
 
-  const cronTop = [...siteState]
-    .sort((a, b) => b.consecutive_failures - a.consecutive_failures)
-    .slice(0, 5)
-    .map((row) => ({
-      name: row.site_id,
-      count: row.consecutive_failures,
-      risk: toRiskLevel(row.consecutive_failures, Boolean(row.last_error)),
-    }));
-
-  const triggerSeries24h = buildTenBins(runs24.map((row) => row.started_at), now.getTime());
-
-  const totalSkills = sourceCounter.size;
-  const healthySkills = Math.max(0, totalSkills - activeErrorCount);
-  const apiCalls24h = runs24.reduce((sum, row) => sum + (row.items_found ?? 0), 0);
-  const apiCallsTokyo = runsTokyo.length;
+  const endpointTop: Array<{ name: string; calls24h: number; note?: string }> = Array.isArray(endpointSourceMaybe)
+    ? endpointSourceMaybe
+        .map((row) => {
+          if (!isObj(row)) return null;
+          const note = typeof row.note === 'string' ? row.note : undefined;
+          return {
+            name: readStr(row.endpoint_group ?? row.name, '--'),
+            calls24h: readNum(row.calls_24h ?? row.calls24h, 0),
+            ...(note ? { note } : {}),
+          };
+        })
+        .filter((x): x is { name: string; calls24h: number; note?: string } => x !== null)
+    : [];
 
   return {
     meta: {
-      contractVersion: 'v1',
-      generatedAt: nowIso,
-      dataUpdatedAt: latestDataTs ? formatTokyo(new Date(latestDataTs).toISOString()) : '--',
-      freshnessDelayMin: metric('Derived', freshnessMin, `${freshnessMin} 分钟`),
-      integrityStatus: metric('Derived', 'partial', '部分缺失'),
-      windowDisplay: 'Rolling 24h / Tokyo 当日',
-      p0CoreCoverageRatio: metric('Derived', 0.75, '75.0%'),
-      topN: { skill: 6, cron: 5, api: 5 },
+      contractVersion: readStr(meta.contract_version ?? meta.contractVersion, 'v1'),
+      generatedAt: readStr(meta.generated_at ?? meta.generatedAt, new Date().toISOString()),
+      dataUpdatedAt: readStr(meta.data_updated_at ?? meta.dataUpdatedAt, '--'),
+      freshnessDelayMin: parseMetric(meta.freshness_delay_min ?? meta.freshnessDelayMin, {
+        readiness: 'Derived',
+        value: 0,
+        display: '0 分钟',
+      }, readNum),
+      integrityStatus: parseMetric(meta.integrity_status ?? meta.integrityStatus, {
+        readiness: 'Derived',
+        value: 'partial',
+        display: '部分缺失',
+      }, toIntegrity),
+      windowDisplay: readStr(
+        (isObj(meta.window) ? (meta.window as Dict).display : undefined) ?? meta.windowDisplay,
+        'Rolling 24h / Tokyo 当日',
+      ),
+      p0CoreCoverageRatio: parseMetric(meta.p0_core_coverage_ratio ?? meta.p0CoreCoverageRatio, {
+        readiness: 'Derived',
+        value: 0,
+        display: '0%',
+      }, readNum),
+      topN: {
+        skill: readNum((isObj(meta.topn) ? (meta.topn as Dict).skill : undefined) ?? (isObj(meta.topN) ? (meta.topN as Dict).skill : undefined), 6),
+        cron: readNum((isObj(meta.topn) ? (meta.topn as Dict).cron : undefined) ?? (isObj(meta.topN) ? (meta.topN as Dict).cron : undefined), 5),
+        api: readNum((isObj(meta.topn) ? (meta.topn as Dict).api : undefined) ?? (isObj(meta.topN) ? (meta.topN as Dict).api : undefined), 5),
+      },
     },
     healthOverview: {
-      serviceStatusNow: metric(activeErrorCount > 0 ? 'Derived' : 'Ready', activeErrorCount > 0 ? 'degraded' : 'running', activeErrorCount > 0 ? '降级' : '运行中'),
-      restartUnexpected24h: metric('Derived', runFailures24.length, String(runFailures24.length)),
-      api429Ratio24h: metricGap(),
-      activeErrorCount: metric('Derived', activeErrorCount, String(activeErrorCount)),
-      lastRestartAt: metric('Derived', latestFailureRun?.started_at ?? null, latestFailureRun ? formatTokyo(latestFailureRun.started_at) : '--'),
-      lastRestartReason: metric('Derived', latestFailureRun?.error ?? null, latestFailureRun?.error ?? '--'),
+      serviceStatusNow: parseMetric(health.service_status_now ?? health.serviceStatusNow, {
+        readiness: 'Ready',
+        value: 'running',
+        display: '运行中',
+      }, toServiceStatus),
+      restartUnexpected24h: parseMetric(health.restart_unexpected_count_24h ?? health.restartUnexpected24h, {
+        readiness: 'Derived',
+        value: 0,
+        display: '0',
+      }, readNum),
+      api429Ratio24h: parseMetric(health.api_429_ratio_24h ?? health.api429Ratio24h, metricGap(), toNumberOrNull),
+      activeErrorCount: parseMetric(health.active_error_count ?? health.activeErrorCount, {
+        readiness: 'Derived',
+        value: 0,
+        display: '0',
+      }, readNum),
+      lastRestartAt: parseMetric(health.last_restart_at ?? health.lastRestartAt, {
+        readiness: 'Derived',
+        value: null,
+        display: '--',
+      }, toStringOrNull),
+      lastRestartReason: parseMetric(health.last_restart_reason ?? health.lastRestartReason, {
+        readiness: 'Derived',
+        value: null,
+        display: '--',
+      }, toStringOrNull),
     },
     trends: {
-      triggerSeries24h,
-      apiSeries24h: triggerSeries24h.map((value) => (value > 0 ? 1 : 0)),
-      throttleSeries24h: new Array<number>(10).fill(0),
+      triggerSeries24h: parseSeries(trends.trigger_series_24h ?? trends.triggerSeries24h),
+      apiSeries24h: parseSeries(trends.api_calls_series_24h ?? trends.apiSeries24h),
+      throttleSeries24h: parseSeries(trends.api_429_series_24h ?? trends.throttleSeries24h),
     },
     skillSummary: {
-      totalSkills: metric('Derived', totalSkills, String(totalSkills)),
-      healthySkills: metric('Derived', healthySkills, String(healthySkills)),
-      calls24h: metric('Derived', runs24.length, formatNumber(runs24.length)),
-      callsTokyoToday: metric('Derived', runsTokyo.length, formatNumber(runsTokyo.length)),
-      top:
-        skillTop.length > 0
-          ? skillTop
-          : [
-              { name: '--', calls24h: 0 },
-              { name: '--', calls24h: 0 },
-              { name: '--', calls24h: 0 },
-              { name: '--', calls24h: 0 },
-              { name: '--', calls24h: 0 },
-              { name: '--', calls24h: 0 },
-            ],
+      totalSkills: parseMetric(skill.total_skills ?? skill.totalSkills, {
+        readiness: 'Ready',
+        value: 0,
+        display: '0',
+      }, readNum),
+      healthySkills: parseMetric(skill.healthy_skills ?? skill.healthySkills, {
+        readiness: 'Derived',
+        value: 0,
+        display: '0',
+      }, readNum),
+      calls24h: parseMetric(skill.calls_24h ?? skill.calls24h, {
+        readiness: 'Derived',
+        value: 0,
+        display: '0',
+      }, readNum),
+      callsTokyoToday: parseMetric(skill.calls_tokyo_today ?? skill.callsTokyoToday, {
+        readiness: 'Derived',
+        value: 0,
+        display: '0',
+      }, readNum),
+      top: skillTop,
     },
     cronSummary: {
-      totalTasks: metric('Derived', siteState.length, String(siteState.length)),
-      enabledTasks: metric('Derived', siteState.filter((row) => Boolean(row.next_run_at)).length, String(siteState.filter((row) => Boolean(row.next_run_at)).length)),
-      triggerTotal24h: metric('Derived', runs24.length, formatNumber(runs24.length)),
-      triggerTokyoToday: metric('Derived', runsTokyo.length, formatNumber(runsTokyo.length)),
-      riskTop:
-        cronTop.length > 0
-          ? cronTop
-          : [
-              { name: '--', count: 0, risk: 'green' },
-              { name: '--', count: 0, risk: 'green' },
-              { name: '--', count: 0, risk: 'green' },
-              { name: '--', count: 0, risk: 'green' },
-              { name: '--', count: 0, risk: 'green' },
-            ],
+      totalTasks: parseMetric(cron.total_tasks ?? cron.totalTasks, {
+        readiness: 'Ready',
+        value: 0,
+        display: '0',
+      }, readNum),
+      enabledTasks: parseMetric(cron.enabled_tasks ?? cron.enabledTasks, {
+        readiness: 'Ready',
+        value: 0,
+        display: '0',
+      }, readNum),
+      triggerTotal24h: parseMetric(cron.trigger_total_24h ?? cron.triggerTotal24h, {
+        readiness: 'Ready',
+        value: 0,
+        display: '0',
+      }, readNum),
+      triggerTokyoToday: parseMetric(cron.trigger_total_tokyo_today ?? cron.triggerTokyoToday, {
+        readiness: 'Ready',
+        value: 0,
+        display: '0',
+      }, readNum),
+      riskTop,
     },
     apiSummary: {
-      callTotal24h: metric('Derived', apiCalls24h, formatNumber(apiCalls24h)),
-      callTokyoToday: metric('Derived', apiCallsTokyo, formatNumber(apiCallsTokyo)),
-      errorRate24h: metricGap(),
-      throttleRate24h: metricGap(),
-      endpointTop: [
-        { name: '--', calls24h: 0, note: GAP_NOTE },
-        { name: '--', calls24h: 0, note: GAP_NOTE },
-        { name: '--', calls24h: 0, note: GAP_NOTE },
-        { name: '--', calls24h: 0, note: GAP_NOTE },
-        { name: '--', calls24h: 0, note: GAP_NOTE },
-      ],
+      callTotal24h: parseMetric(api.api_call_total_24h ?? api.callTotal24h, metricGap(), toNumberOrNull),
+      callTokyoToday: parseMetric(api.api_call_total_tokyo_today ?? api.callTokyoToday, metricGap(), toNumberOrNull),
+      errorRate24h: parseMetric(api.api_error_rate_24h ?? api.errorRate24h, metricGap(), toNumberOrNull),
+      throttleRate24h: parseMetric(api.api_429_ratio_24h ?? api.throttleRate24h, metricGap(), toNumberOrNull),
+      endpointTop,
     },
   };
+}
+
+async function fetchDashboardByPath(path: string): Promise<DashboardData | null> {
+  if (!baseUrl || !anonKey) return null;
+
+  const url = new URL(path, baseUrl);
+  url.searchParams.set('profile', pickProfile());
+  url.searchParams.set('tz', 'Asia/Tokyo');
+  url.searchParams.set('locale', 'zh-CN');
+
+  const res = await fetch(url.toString(), {
+    method: 'GET',
+    headers: {
+      authorization: `Bearer ${anonKey}`,
+      apikey: anonKey,
+      'content-type': 'application/json',
+    },
+  });
+
+  if (!res.ok) {
+    throw new Error(`dashboard endpoint failed ${res.status} ${res.statusText}`);
+  }
+
+  const payload = (await res.json()) as unknown;
+  return mapDashboardContract(payload);
+}
+
+export async function loadDashboardDataFromInsforge(): Promise<DashboardData | null> {
+  if (!baseUrl || !anonKey) return null;
+
+  for (const path of DASHBOARD_PATHS) {
+    try {
+      const mapped = await fetchDashboardByPath(path);
+      if (mapped) return mapped;
+    } catch {
+      // try next function path; UI fallback handled in App.tsx
+    }
+  }
+
+  return null;
 }
