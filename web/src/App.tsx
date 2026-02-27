@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 import { Block } from 'baseui/block';
 import { dashboardData } from './mock/dashboard';
+import { loadDashboardDataFromInsforge } from './services/dashboard-from-insforge';
 import type { RiskLevel } from './types/dashboard';
 
 type Profile = 'desktop' | 'tablet' | 'mobile';
@@ -431,7 +432,7 @@ function MobileHealth() {
       <span className="cv-vsep" />
       <span>RESTARTS: {dashboardData.healthOverview.restartUnexpected24h.display}</span>
       <span className="cv-vsep" />
-      <span className="cv-warn">429: 8.3%</span>
+      <span className="cv-warn">429: {dashboardData.healthOverview.api429Ratio24h.display}</span>
       <span className="cv-vsep" />
       <span className="cv-bad">ERRORS: {dashboardData.healthOverview.activeErrorCount.display}</span>
     </section>
@@ -456,7 +457,7 @@ function MobileTrigger() {
     <section className="cv-card cv-mobile-trend">
       <div className="cv-mobile-card-head">
         <span>CRON TRIGGER (24H)</span>
-        <span className="cv-muted2">1,847 total</span>
+        <span className="cv-muted2">{dashboardData.cronSummary.triggerTotal24h.display} total</span>
       </div>
       <div className="cv-chart-wrap cv-mobile-chart">
         <LineChart values={dashboardData.trends.triggerSeries24h} tone="green" />
@@ -474,7 +475,7 @@ function MobileApiTrend() {
     <section className="cv-card cv-mobile-trend">
       <div className="cv-mobile-card-head">
         <span>24H API CALLS / THROTTLE</span>
-        <span className="cv-muted2">6,616</span>
+        <span className="cv-muted2">{dashboardData.apiSummary.callTotal24h.display}</span>
       </div>
       <div className="cv-legend cv-legend-mobile">
         <span><i className="cv-line cv-line-green" />调用</span>
@@ -524,6 +525,33 @@ function MobileLayout() {
 
 function App() {
   const profile = useProfile();
+  const [, forceRefresh] = useReducer((value: number) => value + 1, 0);
+
+  useEffect(() => {
+    let disposed = false;
+
+    void (async () => {
+      try {
+        const next = await loadDashboardDataFromInsforge();
+        if (!next || disposed) return;
+        Object.assign(dashboardData, next);
+        // Keep a visible trace in devtools while verifying backend linkage.
+        console.info('[clawview] loaded dashboard from insforge', {
+          generatedAt: next.meta.generatedAt,
+          dataUpdatedAt: next.meta.dataUpdatedAt,
+          cron24h: next.cronSummary.triggerTotal24h.display,
+        });
+        forceRefresh();
+      } catch (error) {
+        // Keep local mock data as fallback when backend is unavailable.
+        console.error('[clawview] failed to load insforge dashboard, fallback to mock', error);
+      }
+    })();
+
+    return () => {
+      disposed = true;
+    };
+  }, [forceRefresh]);
 
   if (profile === 'mobile') {
     return <MobileLayout />;
