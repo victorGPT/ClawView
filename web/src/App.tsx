@@ -132,98 +132,6 @@ function LineChart({ values, tone }: { values: number[]; tone: 'green' | 'orange
   );
 }
 
-interface StackedDataPoint {
-  total: number;
-  throttled: number;
-  success: number;
-}
-
-function StackedAreaChart({ data }: { data: StackedDataPoint[] }) {
-  const width = 560;
-  const height = 140;
-  const left = 34;
-  const top = 6;
-  const plotWidth = width - left - 8;
-  const plotHeight = height - top - 12;
-  const baseY = top + plotHeight;
-
-  const maxValue = Math.max(...data.map((d) => d.total), 1);
-  const midValue = Math.round(maxValue / 2);
-  const yTicks = [
-    { value: maxValue, y: top },
-    { value: midValue, y: top + Math.round(plotHeight / 2) },
-    { value: 0, y: baseY },
-  ];
-
-  // Build points for total line (top of stack)
-  const totalPoints = data.map((d, i) => ({
-    x: Math.round(left + (i / (data.length - 1 || 1)) * plotWidth),
-    y: Math.round(top + plotHeight - (d.total / maxValue) * plotHeight),
-  }));
-
-  // Build points for throttle line (bottom of orange area = top of green area)
-  const throttlePoints = data.map((d, i) => ({
-    x: Math.round(left + (i / (data.length - 1 || 1)) * plotWidth),
-    y: Math.round(top + plotHeight - (d.throttled / maxValue) * plotHeight),
-  }));
-
-  // Build area paths
-  const totalLinePath = buildSmoothPath(totalPoints);
-  const throttleLinePath = buildSmoothPath(throttlePoints);
-
-  // Close the paths for area fill
-  const buildStackedAreaPath = (topPoints: ChartPoint[], bottomPoints: ChartPoint[]) => {
-    if (topPoints.length === 0 || bottomPoints.length === 0) return '';
-    const topLine = buildSmoothPath(topPoints);
-    const bottomLineReversed = buildSmoothPath([...bottomPoints].reverse());
-    const firstTop = topPoints[0];
-    const lastBottom = bottomPoints[bottomPoints.length - 1];
-    return `${topLine} L ${lastBottom.x} ${lastBottom.y} ${bottomLineReversed} L ${firstTop.x} ${firstTop.y} Z`;
-  };
-
-  // Green area: from baseline (0) up to throttle line
-  const baselinePoints = throttlePoints.map((p) => ({ x: p.x, y: baseY }));
-  const greenAreaPath = buildStackedAreaPath(throttlePoints, baselinePoints);
-
-  // Orange area: from throttle line up to total line
-  const orangeAreaPath = buildStackedAreaPath(totalPoints, throttlePoints);
-
-  return (
-    <div className="cv-linechart cv-stacked-chart">
-      <svg className="cv-linechart-svg" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden>
-        <defs>
-          <linearGradient id="stacked-green" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#00ff8866" />
-            <stop offset="100%" stopColor="#00ff8822" />
-          </linearGradient>
-          <linearGradient id="stacked-orange" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#ff880066" />
-            <stop offset="100%" stopColor="#ff880022" />
-          </linearGradient>
-        </defs>
-        <line x1={left} y1={top} x2={left} y2={baseY} className="cv-chart-axis" />
-        <line x1={left} y1={baseY} x2={left + plotWidth} y2={baseY} className="cv-chart-axis" />
-        {yTicks.map((tick) => (
-          <g key={`stacked-y-${tick.value}-${tick.y}`}>
-            <line x1={left} y1={tick.y} x2={left + plotWidth} y2={tick.y} className="cv-chart-grid-line" />
-            <text x={left - 4} y={tick.y + 3} textAnchor="end" className="cv-chart-tick-text">
-              {tick.value}
-            </text>
-          </g>
-        ))}
-        {/* Green area (success calls) */}
-        <path d={greenAreaPath} className="cv-linechart-area" fill="url(#stacked-green)" />
-        {/* Orange area (throttled calls) */}
-        <path d={orangeAreaPath} className="cv-linechart-area" fill="url(#stacked-orange)" />
-        {/* Total line */}
-        <path d={totalLinePath} className="cv-linechart-path" />
-        {/* Throttle line */}
-        <path d={throttleLinePath} className="cv-linechart-path cv-linechart-path-throttle" />
-      </svg>
-    </div>
-  );
-}
-
 function AxisRow() {
   return (
     <div className="cv-axis-row">
@@ -347,17 +255,8 @@ function DesktopTriggerCard() {
 }
 
 function DesktopApiCard() {
-  // Build stacked data from separate series
-  const callSeries = dashboardData.trends.apiSeries24h;
-  const throttleSeries = dashboardData.trends.throttleSeries24h;
-  const stackedData: StackedDataPoint[] = callSeries.map((total, i) => {
-    const throttled = throttleSeries[i] ?? 0;
-    return {
-      total,
-      throttled,
-      success: Math.max(0, total - throttled),
-    };
-  });
+  const call = dashboardData.trends.apiSeries24h.map((v) => v + 1);
+  const throttle = dashboardData.trends.throttleSeries24h.map((v) => v + 1);
 
   return (
     <section className="cv-card cv-trend-card">
@@ -365,12 +264,15 @@ function DesktopApiCard() {
         <span>24h API 调用 / 限速趋势</span>
         <span className="cv-mini">ROLLING 24H</span>
       </div>
-      <div className="cv-legend cv-legend-stacked">
-        <span><i className="cv-area cv-area-green" />成功调用</span>
-        <span><i className="cv-area cv-area-orange" />429 限速</span>
+      <div className="cv-legend">
+        <span><i className="cv-line cv-line-green" />调用</span>
+        <span><i className="cv-line cv-line-orange" />429 限速</span>
       </div>
-      <div className="cv-chart-wrap cv-chart-wrap-stacked">
-        <StackedAreaChart data={stackedData} />
+      <div className="cv-chart-wrap cv-chart-wrap-half">
+        <LineChart values={call} tone="green" />
+      </div>
+      <div className="cv-chart-wrap cv-chart-wrap-half cv-chart-wrap-half-second">
+        <LineChart values={throttle} tone="orange" />
       </div>
       <AxisRow />
     </section>

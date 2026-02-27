@@ -438,41 +438,6 @@ body,
   stroke: var(--accent-orange);
 }
 
-/* Stacked Area Chart Styles */
-.cv-stacked-chart {
-  height: 100%;
-}
-
-.cv-linechart-path-throttle {
-  stroke: var(--accent-orange);
-  stroke-dasharray: 4 2;
-}
-
-.cv-legend-stacked {
-  gap: 20px;
-}
-
-.cv-area {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  margin-right: 6px;
-  border-radius: 2px;
-}
-
-.cv-area-green {
-  background: linear-gradient(180deg, #00ff8866, #00ff8822);
-}
-
-.cv-area-orange {
-  background: linear-gradient(180deg, #ff880066, #ff880022);
-}
-
-.cv-chart-wrap-stacked {
-  height: 140px;
-  padding: 8px 16px;
-}
-
 .cv-axis-row {
   padding: 10px 20px 12px;
   display: flex;
