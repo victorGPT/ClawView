@@ -232,15 +232,27 @@ function buildDashboardContract({ snapshot, events, profile }) {
           : { readiness: 'Gap', series: [], display: '--', note: GAP_NOTE },
     },
     skill_summary: {
-      total_skills: metric('Gap', null, '--', GAP_NOTE),
-      healthy_skills: metric('Gap', null, '--', GAP_NOTE),
+      total_skills:
+        typeof snapshot?.skills_total === 'number'
+          ? metric('Derived', asNumber(snapshot?.skills_total, 0), String(asNumber(snapshot?.skills_total, 0)))
+          : metricGap(),
+      healthy_skills:
+        typeof snapshot?.skills_total === 'number'
+          ? metric('Derived', asNumber(snapshot?.skills_total, 0), String(asNumber(snapshot?.skills_total, 0)), '暂以总数代替')
+          : metricGap(),
       calls_24h: metric('Derived', asNumber(snapshot?.cron_runs_24h_total, 0), String(asNumber(snapshot?.cron_runs_24h_total, 0))),
       calls_tokyo_today: metric('Derived', asNumber(snapshot?.cron_runs_today_tokyo_total, 0), String(asNumber(snapshot?.cron_runs_today_tokyo_total, 0))),
       top: [],
     },
     cron_summary: {
-      total_tasks: metric('Gap', null, '--', GAP_NOTE),
-      enabled_tasks: metric('Gap', null, '--', GAP_NOTE),
+      total_tasks:
+        typeof snapshot?.cron_jobs_total === 'number'
+          ? metric('Derived', asNumber(snapshot?.cron_jobs_total, 0), String(asNumber(snapshot?.cron_jobs_total, 0)))
+          : metricGap(),
+      enabled_tasks:
+        typeof snapshot?.cron_jobs_enabled === 'number'
+          ? metric('Derived', asNumber(snapshot?.cron_jobs_enabled, 0), String(asNumber(snapshot?.cron_jobs_enabled, 0)))
+          : metricGap(),
       trigger_total_24h: metric('Derived', asNumber(snapshot?.cron_runs_24h_total, 0), String(asNumber(snapshot?.cron_runs_24h_total, 0))),
       trigger_total_tokyo_today: metric('Derived', asNumber(snapshot?.cron_runs_today_tokyo_total, 0), String(asNumber(snapshot?.cron_runs_today_tokyo_total, 0))),
       trigger_storm_task_top5_5m: {
