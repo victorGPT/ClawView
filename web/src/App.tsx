@@ -232,7 +232,7 @@ function DesktopHealthBar() {
       </div>
       <span className="cv-sep" />
       <div className="cv-health-item">
-        <span className="cv-label">活跃错误</span>
+        <span className="cv-label">系统错误</span>
         <strong className="cv-num cv-bad">{dashboardData.healthOverview.activeErrorCount.display}</strong>
       </div>
     </section>
@@ -307,12 +307,19 @@ function SkillCard({ mobile }: { mobile: boolean }) {
         <strong className="cv-muted2">{dashboardData.skillSummary.callsTokyoToday.display}</strong>
       </div>
       <div className="cv-list-head">{mobile ? 'TOP 5 BY 24H CALLS' : '24h 调用 Top6'}</div>
-      {top.map((item, idx) => (
-        <div className="cv-list-row" key={item.name}>
-          <span>{item.name}</span>
-          <strong className={idx === 0 ? 'cv-bad' : idx === 1 ? 'cv-warn' : ''}>{item.calls24h.toLocaleString()}</strong>
+      {top.length === 0 ? (
+        <div className="cv-list-row">
+          <span>数据接入中</span>
+          <strong>--</strong>
         </div>
-      ))}
+      ) : (
+        top.map((item, idx) => (
+          <div className="cv-list-row" key={item.name}>
+            <span>{item.name}</span>
+            <strong className={idx === 0 ? 'cv-bad' : idx === 1 ? 'cv-warn' : ''}>{item.calls24h.toLocaleString()}</strong>
+          </div>
+        ))
+      )}
     </section>
   );
 }
@@ -345,15 +352,22 @@ function CronCard({ mobile }: { mobile: boolean }) {
         <strong className="cv-muted2">{dashboardData.cronSummary.triggerTokyoToday.display}</strong>
       </div>
       <div className="cv-list-head">{mobile ? 'RISK TOP 3' : '风险 Top5'}</div>
-      {top.map((item) => (
-        <div className="cv-list-row" key={item.name}>
-          <span>{item.name}</span>
-          <div className="cv-tail">
-            <strong>{item.count.toLocaleString()}</strong>
-            <span className={riskClass(item.risk)}>{formatRisk(item.risk)}</span>
-          </div>
+      {top.length === 0 ? (
+        <div className="cv-list-row">
+          <span>数据接入中</span>
+          <strong>--</strong>
         </div>
-      ))}
+      ) : (
+        top.map((item) => (
+          <div className="cv-list-row" key={item.name}>
+            <span>{item.name}</span>
+            <div className="cv-tail">
+              <strong>{item.count.toLocaleString()}</strong>
+              <span className={riskClass(item.risk)}>{formatRisk(item.risk)}</span>
+            </div>
+          </div>
+        ))
+      )}
     </section>
   );
 }
@@ -386,17 +400,24 @@ function ApiCard({ mobile }: { mobile: boolean }) {
         <strong className="cv-muted2">{dashboardData.apiSummary.callTokyoToday.display}</strong>
       </div>
       <div className="cv-list-head">{mobile ? 'TOP 3 BY 24H CALLS' : 'API 分组 Top5（24h）'}</div>
-      {top.map((item, idx) => (
-        <div className="cv-list-row" key={`${item.name}-${idx}`}>
-          <span>{item.name}</span>
-          <div className="cv-tail">
-            <strong>{item.calls24h > 0 ? item.calls24h.toLocaleString() : '--'}</strong>
-            {item.note ? (
-              <span className={idx === 0 ? 'cv-risk cv-risk-yellow' : 'cv-risk cv-risk-green'}>{item.note}</span>
-            ) : null}
-          </div>
+      {top.length === 0 ? (
+        <div className="cv-list-row">
+          <span>数据接入中</span>
+          <strong>--</strong>
         </div>
-      ))}
+      ) : (
+        top.map((item, idx) => (
+          <div className="cv-list-row" key={`${item.name}-${idx}`}>
+            <span>{item.name}</span>
+            <div className="cv-tail">
+              <strong>{item.calls24h > 0 ? item.calls24h.toLocaleString() : '--'}</strong>
+              {item.note ? (
+                <span className={idx === 0 ? 'cv-risk cv-risk-yellow' : 'cv-risk cv-risk-green'}>{item.note}</span>
+              ) : null}
+            </div>
+          </div>
+        ))
+      )}
     </section>
   );
 }
