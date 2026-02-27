@@ -237,8 +237,12 @@ function buildDashboardContract({ snapshot, events, profile }) {
           ? metric('Derived', asNumber(snapshot?.skills_total, 0), String(asNumber(snapshot?.skills_total, 0)))
           : metricGap(),
       healthy_skills:
-        typeof snapshot?.skills_total === 'number'
-          ? metric('Derived', asNumber(snapshot?.skills_total, 0), String(asNumber(snapshot?.skills_total, 0)), '暂以总数代替')
+        typeof snapshot?.healthy_skills === 'number' || typeof snapshot?.skills_healthy === 'number' || typeof snapshot?.skills_healthy_total === 'number'
+          ? metric(
+              'Derived',
+              asNumber(snapshot?.healthy_skills ?? snapshot?.skills_healthy ?? snapshot?.skills_healthy_total, 0),
+              String(asNumber(snapshot?.healthy_skills ?? snapshot?.skills_healthy ?? snapshot?.skills_healthy_total, 0)),
+            )
           : metricGap(),
       calls_24h: metric('Derived', asNumber(snapshot?.cron_runs_24h_total, 0), String(asNumber(snapshot?.cron_runs_24h_total, 0))),
       calls_tokyo_today: metric('Derived', asNumber(snapshot?.cron_runs_today_tokyo_total, 0), String(asNumber(snapshot?.cron_runs_today_tokyo_total, 0))),
