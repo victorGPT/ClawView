@@ -78,12 +78,33 @@ function joinFilter(queryParts) {
   return queryParts.filter(Boolean).join('&');
 }
 
+function normalizeSnapshotRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const payload = row.payload && typeof row.payload === 'object' ? row.payload : row;
+  const generatedAt = row.generated_at || row.generatedAt || null;
+  return {
+    ...payload,
+    generated_at: generatedAt,
+  };
+}
+
+function normalizeApiEventRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const payload = row.payload && typeof row.payload === 'object' ? row.payload : row;
+  const generatedAt = row.generated_at || row.generatedAt || null;
+  return {
+    ...payload,
+    ts: payload.ts || generatedAt,
+    generated_at: generatedAt,
+  };
+}
+
 async function tryLoadLatestSnapshot(baseUrl, apiKey, tenantId, projectId) {
   for (const table of SNAPSHOT_TABLE_CANDIDATES) {
     const filter = joinFilter([
       `tenant_id=eq.${encodeURIComponent(tenantId)}`,
       `project_id=eq.${encodeURIComponent(projectId)}`,
-      'order=ts.desc',
+      'order=generated_at.desc',
       'limit=1',
       'select=*',
     ]);
@@ -93,7 +114,7 @@ async function tryLoadLatestSnapshot(baseUrl, apiKey, tenantId, projectId) {
     if (!res.ok) continue;
     if (!Array.isArray(res.body)) continue;
 
-    return { table, row: res.body[0] ?? null };
+    return { table, row: normalizeSnapshotRow(res.body[0] ?? null) };
   }
 
   return { table: null, row: null };
@@ -104,8 +125,8 @@ async function tryLoadRecentEvents(baseUrl, apiKey, tenantId, projectId, sinceIs
     const filter = joinFilter([
       `tenant_id=eq.${encodeURIComponent(tenantId)}`,
       `project_id=eq.${encodeURIComponent(projectId)}`,
-      `ts=gte.${encodeURIComponent(sinceIso)}`,
-      'order=ts.asc',
+      `generated_at=gte.${encodeURIComponent(sinceIso)}`,
+      'order=generated_at.asc',
       'limit=5000',
       'select=*',
     ]);
@@ -115,7 +136,7 @@ async function tryLoadRecentEvents(baseUrl, apiKey, tenantId, projectId, sinceIs
     if (!res.ok) continue;
     if (!Array.isArray(res.body)) continue;
 
-    return { table, rows: res.body };
+    return { table, rows: res.body.map(normalizeApiEventRow).filter(Boolean) };
   }
 
   return { table: null, rows: [] };
@@ -167,7 +188,7 @@ function buildDashboardContract({ snapshot, events, profile }) {
     meta: {
       contract_version: 'v1',
       generated_at: nowIso,
-      data_updated_at: snapshot?.ts || nowIso,
+      data_updated_at: snapshot?.ts || snapshot?.generated_at || nowIso,
       freshness_delay_min: metric('Derived', asNumber(snapshot?.data_freshness_delay_min, 0), `${asNumber(snapshot?.data_freshness_delay_min, 0)} 分钟`),
       integrity_status: metric('Derived', 'partial', '部分缺失'),
       window: {
@@ -269,11 +290,11 @@ async function coreHandle(requestLike) {
     `${url.protocol}//${url.host}`;
 
   const apiKey =
+    (bearerMatch ? bearerMatch[1] : '') ||
+    String(fromHeaderApiKey || '') ||
     process.env.INSFORGE_SERVICE_ROLE_KEY ||
     process.env.INSFORGE_ANON_KEY ||
-    process.env.CLAWVIEW_SYNC_API_KEY ||
-    (bearerMatch ? bearerMatch[1] : '') ||
-    String(fromHeaderApiKey || '');
+    process.env.CLAWVIEW_SYNC_API_KEY;
 
   if (!baseUrl || !apiKey) {
     return json(401, {
