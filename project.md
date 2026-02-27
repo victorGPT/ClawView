@@ -1,6 +1,6 @@
 # ClawView 项目上下文（给 Agent 开发用）
 
-> 目的：让任何接手开发的 Agent 在 1 分钟内知道「这是啥项目、代码在哪、该改哪里」。
+> 说明：本文件是简版入口；详细开发地图见 `docs/clawview/ai-sitemap.md`。
 
 ## 1) 这是一个什么项目
 - 项目名：**ClawView**

@@ -4,8 +4,9 @@
 
 ## Required startup context
 1. 先读：`project.md`
-2. 再读：`docs/clawview/clawview-v1-prd.md`、`docs/clawview/clawview-v1-fields.md`、`docs/clawview/plan.md`
-3. 保持 MVP 边界：Display-only，不做反控能力。
+2. 再读：`docs/clawview/ai-sitemap.md`（开发地图）
+3. 再读：`docs/clawview/clawview-v1-prd.md`、`docs/clawview/clawview-v1-fields.md`、`docs/clawview/plan.md`
+4. 保持 MVP 边界：Display-only，不做反控能力。
 
 ## Repo routing
 - 前端改动：`web/src/**`
