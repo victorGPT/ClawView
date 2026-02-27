@@ -177,9 +177,7 @@ function StackedAreaChart({ data }: { data: StackedDataPoint[] }) {
     const topLine = buildSmoothPath(topPoints);
     const bottomLineReversed = buildSmoothPath([...bottomPoints].reverse());
     const firstTop = topPoints[0];
-    const lastTop = topPoints[topPoints.length - 1];
     const lastBottom = bottomPoints[bottomPoints.length - 1];
-    const firstBottom = bottomPoints[0];
     return `${topLine} L ${lastBottom.x} ${lastBottom.y} ${bottomLineReversed} L ${firstTop.x} ${firstTop.y} Z`;
   };
 
@@ -388,14 +386,10 @@ function SkillCard({ mobile }: { mobile: boolean }) {
         <span>{mobile ? 'SKILL SUMMARY' : 'Skill 摘要'}</span>
         <span className="cv-link">查看全部 →</span>
       </div>
-      <div className="cv-stats-2">
+      <div className="cv-stats-1">
         <div>
           <span>总数</span>
           <strong>{dashboardData.skillSummary.totalSkills.display}</strong>
-        </div>
-        <div>
-          <span>健康</span>
-          <strong className="cv-ok">{dashboardData.skillSummary.healthySkills.display}</strong>
         </div>
       </div>
       <div className="cv-calls">

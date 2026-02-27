@@ -545,6 +545,33 @@ body,
   line-height: 1.05;
 }
 
+
+.cv-stats-1 {
+  display: grid;
+  grid-template-columns: 1fr;
+  border-bottom: 1px solid var(--border-gray);
+}
+
+.cv-stats-1 > div {
+  display: grid;
+  gap: 2px;
+  padding: 10px 16px;
+}
+
+.cv-stats-1 span {
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 500;
+}
+
+.cv-stats-1 strong {
+  color: var(--text-primary);
+  font-family: 'Space Grotesk', 'JetBrains Mono', sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.05;
+}
+
 .cv-calls {
   min-height: 34px;
   padding: 8px 16px;
