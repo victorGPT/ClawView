@@ -16,6 +16,7 @@ aligned to the three canonical docs:
 ## Meaning
 - This is not a design target; it is current runtime reality from CLI data.
 - Use this baseline to prioritize implementation in `runtime/clawview-probe/` and hook pipeline.
+- P0 field status now uses a 24h lookback backfill: for each key, pick the most recent non-null value across snapshot files within the window.
 
 ## Recompute command
 ```bash

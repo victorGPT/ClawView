@@ -12,6 +12,7 @@ function argValue(flag, fallback) {
 
 const probeDir = argValue('--probe-dir', path.join(os.homedir(), '.openclaw', 'clawview-probe'));
 const outPath = argValue('--out', path.join(probeDir, 'p0-core-live-status.json'));
+const LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
 // Derived from docs/clawview/{clawview-v1-prd.md,clawview-v1-fields.md,plan.md}
 const P0_CORE_KEYS = [
@@ -44,31 +45,64 @@ function readJsonl(filePath) {
     .filter(Boolean);
 }
 
-function latestSnapshotFile(dir) {
+function snapshotFiles(dir) {
   if (!fs.existsSync(dir)) return null;
   const files = fs
     .readdirSync(dir)
     .filter((f) => /^snapshots-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f))
     .map((f) => path.join(dir, f))
-    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-  return files[0] ?? null;
+    .sort();
+  return files.length > 0 ? files : null;
 }
 
 function isFilled(v) {
   return !(v === null || v === undefined);
 }
 
-const snapshotFile = latestSnapshotFile(probeDir);
-if (!snapshotFile) {
+function tsMs(value) {
+  const ms = Date.parse(value ?? '');
+  return Number.isFinite(ms) ? ms : null;
+}
+
+const files = snapshotFiles(probeDir);
+if (!files) {
   console.log(JSON.stringify({ ok: false, reason: 'no snapshots found', probeDir }, null, 2));
   process.exit(0);
 }
 
-const rows = readJsonl(snapshotFile);
-const latest = rows[rows.length - 1] ?? {};
+let seq = 0;
+const rows = [];
+for (const file of files) {
+  for (const row of readJsonl(file)) {
+    rows.push({
+      file,
+      row,
+      seq: seq++,
+      tsMs: tsMs(row.ts),
+    });
+  }
+}
+
+if (rows.length === 0) {
+  console.log(JSON.stringify({ ok: false, reason: 'no snapshot rows found', probeDir }, null, 2));
+  process.exit(0);
+}
+
+const rowsWithTs = rows.filter((entry) => entry.tsMs !== null);
+const latestEntry = rowsWithTs.length > 0
+  ? rowsWithTs.reduce((a, b) => ((a.tsMs > b.tsMs || (a.tsMs === b.tsMs && a.seq > b.seq)) ? a : b))
+  : rows[rows.length - 1];
+const latest = latestEntry.row ?? {};
+const latestTsMs = latestEntry.tsMs ?? Date.now();
+const lookbackStartMs = latestTsMs - LOOKBACK_MS;
+const lookbackRows = rowsWithTs
+  .filter((entry) => entry.tsMs >= lookbackStartMs && entry.tsMs <= latestTsMs)
+  .sort((a, b) => b.tsMs - a.tsMs || b.seq - a.seq);
+const sourceRows = lookbackRows.length > 0 ? lookbackRows : [latestEntry];
 
 const fields = P0_CORE_KEYS.map((key) => {
-  const value = latest[key];
+  const source = sourceRows.find((entry) => isFilled(entry.row?.[key]));
+  const value = source ? source.row[key] : null;
   const filled = isFilled(value);
   return {
     key,
@@ -84,7 +118,7 @@ const report = {
   ok: true,
   generated_at: new Date().toISOString(),
   probe_dir: probeDir,
-  source_snapshot_file: path.basename(snapshotFile),
+  source_snapshot_file: path.basename(latestEntry.file),
   source_snapshot_ts: latest.ts ?? null,
   p0_core_total: P0_CORE_KEYS.length,
   p0_core_ready: readyCount,
@@ -92,7 +126,7 @@ const report = {
   fields,
   notes: [
     'P0 keys are aligned to ClawView PRD/fields/plan docs.',
-    'This report is runtime-observed (latest snapshot), not a static design declaration.',
+    'This report is runtime-observed with 24h lookback backfill, not a static design declaration.',
   ],
 };
 

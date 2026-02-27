@@ -1,12 +1,12 @@
 {
   "ok": true,
-  "generated_at": "2026-02-27T08:19:47.717Z",
+  "generated_at": "2026-02-27T08:30:00.407Z",
   "probe_dir": "/Users/farmer/.openclaw/clawview-probe",
   "source_snapshot_file": "snapshots-2026-02-27.jsonl",
   "source_snapshot_ts": "2026-02-27T06:39:23.348Z",
   "p0_core_total": 11,
-  "p0_core_ready": 3,
-  "p0_core_coverage_ratio": 0.2727,
+  "p0_core_ready": 4,
+  "p0_core_coverage_ratio": 0.3636,
   "fields": [
     {
       "key": "service_uptime_ratio_24h",
@@ -60,12 +60,12 @@
     },
     {
       "key": "data_freshness_delay_min",
-      "status": "gap",
-      "sample": null
+      "status": "ready",
+      "sample": 0
     }
   ],
   "notes": [
     "P0 keys are aligned to ClawView PRD/fields/plan docs.",
-    "This report is runtime-observed (latest snapshot), not a static design declaration."
+    "This report is runtime-observed with 24h lookback backfill, not a static design declaration."
   ]
 }
