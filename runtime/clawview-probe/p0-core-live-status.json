@@ -1,0 +1,71 @@
+{
+  "ok": true,
+  "generated_at": "2026-02-27T08:30:00.407Z",
+  "probe_dir": "/Users/farmer/.openclaw/clawview-probe",
+  "source_snapshot_file": "snapshots-2026-02-27.jsonl",
+  "source_snapshot_ts": "2026-02-27T06:39:23.348Z",
+  "p0_core_total": 11,
+  "p0_core_ready": 4,
+  "p0_core_coverage_ratio": 0.3636,
+  "fields": [
+    {
+      "key": "service_uptime_ratio_24h",
+      "status": "ready",
+      "sample": 0.18375
+    },
+    {
+      "key": "service_status_now",
+      "status": "ready",
+      "sample": "degraded"
+    },
+    {
+      "key": "trigger_total_24h",
+      "status": "gap",
+      "sample": null
+    },
+    {
+      "key": "trigger_storm_task_top5_5m",
+      "status": "gap",
+      "sample": null
+    },
+    {
+      "key": "api_call_total_24h",
+      "status": "gap",
+      "sample": null
+    },
+    {
+      "key": "api_error_rate_24h",
+      "status": "gap",
+      "sample": null
+    },
+    {
+      "key": "api_429_ratio_24h",
+      "status": "gap",
+      "sample": null
+    },
+    {
+      "key": "endpoint_group_top5_calls_24h",
+      "status": "gap",
+      "sample": null
+    },
+    {
+      "key": "error_fingerprint_top10_24h",
+      "status": "gap",
+      "sample": null
+    },
+    {
+      "key": "restart_unexpected_count_24h",
+      "status": "ready",
+      "sample": 0
+    },
+    {
+      "key": "data_freshness_delay_min",
+      "status": "ready",
+      "sample": 0
+    }
+  ],
+  "notes": [
+    "P0 keys are aligned to ClawView PRD/fields/plan docs.",
+    "This report is runtime-observed with 24h lookback backfill, not a static design declaration."
+  ]
+}
