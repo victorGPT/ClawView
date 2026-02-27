@@ -11,6 +11,7 @@ Display-only runtime observability board for OpenClaw.
 ## Runtime Artifacts (local-first reference)
 - Probe: `runtime/clawview-probe/probe.mjs`
 - Outbound Sync (whitelist+redaction): `runtime/clawview-probe/sync-outbound.mjs`
+- Outbound sync config example: `runtime/clawview-probe/sync-config.example.json`
 - P0 runtime status checker: `runtime/clawview-probe/p0-core-status.mjs`
 - Live status output (generated): `runtime/clawview-probe/p0-core-live-status.json`
 - Hook manifest: `runtime/hooks/clawview-probe/HOOK.md`

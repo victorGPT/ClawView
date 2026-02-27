@@ -17,11 +17,19 @@ metadata:
 Runs a **single** ClawView probe collection on selected hook events and appends compact JSON snapshots
 under `~/.openclaw/clawview-probe/`.
 
-After each probe run, it can optionally invoke outbound sync (`sync-outbound.mjs`) when
-`CLAWVIEW_SYNC_ENABLED` is not `0`.
+After each probe run, it optionally invokes outbound sync (`sync-outbound.mjs`) when sync is enabled
+and a sync URL is available.
+
+Sync config sources (priority):
+1. Process env (`CLAWVIEW_SYNC_*`)
+2. `~/.openclaw/clawview-probe/sync-config.json`
 
 Design goals:
 - Hook-triggered (event-driven)
 - Decoupled from heartbeat and other scheduler modules
 - Debounced to avoid excessive sampling during burst traffic
 - Whitelist + redaction before outbound sync
+
+Note on heartbeat:
+- There is currently no dedicated `heartbeat:*` hook event in OpenClaw hooks.
+- Keep this hook event-driven via `gateway:startup` and `message:sent`.

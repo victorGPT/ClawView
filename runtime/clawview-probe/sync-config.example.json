@@ -1,0 +1,8 @@
+{
+  "syncUrl": "https://<your-project>.ap-southeast.insforge.app/functions/clawview-ingest",
+  "apiKey": "<insforge-api-key>",
+  "hmacSecret": "<optional-hmac-secret>",
+  "tenantId": "default",
+  "projectId": "openclaw",
+  "batchSize": 200
+}
