@@ -20,6 +20,10 @@ function readNum(v: unknown, fallback = 0): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
 }
 
+function readBool(v: unknown, fallback = false): boolean {
+  return typeof v === 'boolean' ? v : fallback;
+}
+
 function normalizeReadiness(v: unknown): Readiness {
   if (v === 'Ready' || v === 'Derived' || v === 'Gap') return v;
   if (v === 'ready') return 'Ready';
@@ -227,6 +231,8 @@ function mapDashboardContract(raw: unknown): DashboardData | null {
         value: null,
         display: '--',
       }, toStringOrNull),
+      openclawSystemAnomaly: readBool(health.openclaw_system_anomaly ?? health.openclawSystemAnomaly, false),
+      clawviewPipelineAnomaly: readBool(health.clawview_pipeline_anomaly ?? health.clawviewPipelineAnomaly, false),
     },
     trends: {
       triggerSeries24h: parseSeries(trends.trigger_series_24h ?? trends.triggerSeries24h),

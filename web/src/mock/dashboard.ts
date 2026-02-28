@@ -18,6 +18,8 @@ export const dashboardData: DashboardData = {
     activeErrorCount: { readiness: 'Derived', value: 7, display: '7' },
     lastRestartAt: { readiness: 'Derived', value: null, display: '--' },
     lastRestartReason: { readiness: 'Derived', value: null, display: '--' },
+    openclawSystemAnomaly: false,
+    clawviewPipelineAnomaly: false,
   },
   trends: {
     triggerSeries24h: [10, 14, 18, 23, 19, 29, 31, 27, 24, 28],

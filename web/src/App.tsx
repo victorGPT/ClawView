@@ -214,11 +214,16 @@ function DesktopDataQuality() {
 }
 
 function DesktopHealthBar() {
+  const systemAnomaly = dashboardData.healthOverview.openclawSystemAnomaly;
+  const pipelineAnomaly = dashboardData.healthOverview.clawviewPipelineAnomaly;
+
   return (
     <section className="cv-card cv-health-row">
       <div className="cv-health-status">
         <span className="cv-live-dot" />
-        <span className="cv-ok">系统健康</span>
+        <span className={systemAnomaly ? 'cv-bad' : 'cv-ok'}>
+          {systemAnomaly ? 'OpenClaw 系统告警' : 'OpenClaw 系统正常'}
+        </span>
       </div>
       <span className="cv-sep" />
       <div className="cv-health-item">
@@ -234,6 +239,11 @@ function DesktopHealthBar() {
       <div className="cv-health-item">
         <span className="cv-label">系统错误</span>
         <strong className="cv-num cv-bad">{dashboardData.healthOverview.activeErrorCount.display}</strong>
+      </div>
+      <span className="cv-sep" />
+      <div className="cv-health-item">
+        <span className="cv-label">ClawView 管道</span>
+        <strong className={pipelineAnomaly ? 'cv-num cv-bad' : 'cv-num cv-ok'}>{pipelineAnomaly ? '异常' : '正常'}</strong>
       </div>
     </section>
   );
@@ -443,15 +453,20 @@ function DesktopLayout({ tablet }: { tablet: boolean }) {
 }
 
 function MobileHealth() {
+  const systemAnomaly = dashboardData.healthOverview.openclawSystemAnomaly;
+  const pipelineAnomaly = dashboardData.healthOverview.clawviewPipelineAnomaly;
+
   return (
     <section className="cv-card cv-mobile-health">
-      <span className="cv-ok">HEALTHY</span>
+      <span className={systemAnomaly ? 'cv-bad' : 'cv-ok'}>{systemAnomaly ? 'SYSTEM ALERT' : 'SYSTEM OK'}</span>
       <span className="cv-vsep" />
       <span>RESTARTS: {dashboardData.healthOverview.restartUnexpected24h.display}</span>
       <span className="cv-vsep" />
       <span className="cv-warn">429: {dashboardData.healthOverview.api429Ratio24h.display}</span>
       <span className="cv-vsep" />
       <span className="cv-bad">ERRORS: {dashboardData.healthOverview.activeErrorCount.display}</span>
+      <span className="cv-vsep" />
+      <span className={pipelineAnomaly ? 'cv-bad' : 'cv-ok'}>PIPELINE: {pipelineAnomaly ? 'ALERT' : 'OK'}</span>
     </section>
   );
 }

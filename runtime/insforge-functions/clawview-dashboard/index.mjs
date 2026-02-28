@@ -183,6 +183,18 @@ function buildDashboardContract({ snapshot, events, profile }) {
     : [];
 
   const skillTop = skillTopFromSnapshot.slice(0, topN.skill);
+  const skillCollectionMode =
+    typeof snapshot?.skill_calls_collection_mode === 'string' && snapshot.skill_calls_collection_mode.trim()
+      ? snapshot.skill_calls_collection_mode
+      : (skillTop.length > 0 ? 'fact-event-structured' : 'fact-only-not-connected');
+  const openclawSystemAnomaly =
+    typeof snapshot?.openclaw_system_anomaly === 'boolean'
+      ? snapshot.openclaw_system_anomaly
+      : (String(snapshot?.service_status_now || 'running') === 'down' || asNumber(snapshot?.restart_unexpected_count_24h, 0) > 0);
+  const clawviewPipelineAnomaly =
+    typeof snapshot?.clawview_pipeline_anomaly === 'boolean'
+      ? snapshot.clawview_pipeline_anomaly
+      : skillCollectionMode !== 'fact-event-structured';
 
   const totalSkillsValue = skillComponents.length > 0 ? skillComponents.length : asNumber(snapshot?.skills_total, 0);
   const healthySkillsValue =
@@ -238,6 +250,8 @@ function buildDashboardContract({ snapshot, events, profile }) {
       last_restart_at: metric('Derived', toISOStringSafe(snapshot?.last_restart_at), toISOStringSafe(snapshot?.last_restart_at) || '--'),
       last_restart_reason: metric('Derived', snapshot?.last_restart_reason || null, snapshot?.last_restart_reason || '--'),
       active_error_count: metric('Derived', asNumber(snapshot?.errors_active_count, 0), String(asNumber(snapshot?.errors_active_count, 0))),
+      openclaw_system_anomaly: openclawSystemAnomaly,
+      clawview_pipeline_anomaly: clawviewPipelineAnomaly,
       api_429_ratio_24h:
         apiTotal24h > 0
           ? metric('Derived', api42924h / apiTotal24h, `${((api42924h / apiTotal24h) * 100).toFixed(1)}%`)
@@ -272,10 +286,7 @@ function buildDashboardContract({ snapshot, events, profile }) {
           ? metric('Derived', asNumber(snapshot?.skill_calls_total_24h, 0), String(asNumber(snapshot?.skill_calls_total_24h, 0)))
           : metricGap(),
       calls_tokyo_today: metricGap(),
-      collection_mode:
-        typeof snapshot?.skill_calls_collection_mode === 'string' && snapshot.skill_calls_collection_mode.trim()
-          ? snapshot.skill_calls_collection_mode
-          : (skillTop.length > 0 ? 'fact-event-structured' : 'fact-only-not-connected'),
+      collection_mode: skillCollectionMode,
       top: skillTop,
     },
     cron_summary: {

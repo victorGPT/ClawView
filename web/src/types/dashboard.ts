@@ -30,6 +30,8 @@ export interface DashboardData {
     activeErrorCount: MetricValue<number>;
     lastRestartAt: MetricValue<string | null>;
     lastRestartReason: MetricValue<string | null>;
+    openclawSystemAnomaly: boolean;
+    clawviewPipelineAnomaly: boolean;
   };
   trends: {
     triggerSeries24h: number[];

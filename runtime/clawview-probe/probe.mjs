@@ -1078,6 +1078,18 @@ function toCoverageValue(v) {
   return true;
 }
 
+function computeAnomalyFlags(params) {
+  const serviceStatusNow = String(params?.serviceStatusNow || "running").trim();
+  const restartUnexpectedCount24h = Number(params?.restartUnexpectedCount24h || 0);
+  const skillCallsCollectionMode = String(params?.skillCallsCollectionMode || "").trim();
+
+  return {
+    openclaw_system_anomaly:
+      serviceStatusNow === "down" || (Number.isFinite(restartUnexpectedCount24h) && restartUnexpectedCount24h > 0),
+    clawview_pipeline_anomaly: skillCallsCollectionMode !== "fact-event-structured",
+  };
+}
+
 function collectSnapshot() {
   const nowMs = Date.now();
   const skills = runOpenclawJson(["skills", "list", "--json"]);
@@ -1118,6 +1130,11 @@ function collectSnapshot() {
 
   const serviceStatusNow = gateway.gateway_rpc_ok ? (errors.errors_active_count > 0 ? "degraded" : "running") : "down";
   const dataFreshnessDelayMin = logsCtx.latest_log_ts_ms == null ? null : Math.max(0, Math.round((nowMs - logsCtx.latest_log_ts_ms) / 60000));
+  const anomalyFlags = computeAnomalyFlags({
+    serviceStatusNow,
+    restartUnexpectedCount24h: restarts.restart_unexpected_count_24h,
+    skillCallsCollectionMode: skillUsage.skill_calls_collection_mode,
+  });
 
   const p0core = {
     service_uptime_ratio_24h: gateway.service_uptime_ratio_24h,
@@ -1156,6 +1173,8 @@ function collectSnapshot() {
     // Service/P0 core
     gateway_status: serviceStatusNow,
     service_status_now: serviceStatusNow,
+    openclaw_system_anomaly: anomalyFlags.openclaw_system_anomaly,
+    clawview_pipeline_anomaly: anomalyFlags.clawview_pipeline_anomaly,
     service_uptime_sec: gateway.service_uptime_sec,
     service_uptime_ratio_24h: gateway.service_uptime_ratio_24h,
 
@@ -1317,6 +1336,7 @@ export const __test = {
   toMs,
   resolveSkillNameFromText,
   buildSessionSkillResultIndex,
+  computeAnomalyFlags,
 };
 
 async function main() {

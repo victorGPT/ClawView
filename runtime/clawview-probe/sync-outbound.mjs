@@ -44,6 +44,8 @@ const ALLOWED_SNAPSHOT_FIELDS = [
   "timezone",
   "gateway_status",
   "service_status_now",
+  "openclaw_system_anomaly",
+  "clawview_pipeline_anomaly",
   "service_uptime_ratio_24h",
   "cron_runs_24h_total",
   "cron_runs_today_tokyo_total",
