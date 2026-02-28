@@ -28,6 +28,9 @@ const lockPath = path.join(outDir, "probe.lock");
 const apiCursorPath = path.join(outDir, "api-cursor.json");
 const apiEventsPath = path.join(outDir, "api-events.jsonl");
 const apiEventRetentionMs = 48 * 60 * 60 * 1000;
+const skillCursorPath = path.join(outDir, "skill-cursor.json");
+const skillEventsPath = path.join(outDir, "skill-events.jsonl");
+const skillEventRetentionMs = 48 * 60 * 60 * 1000;
 
 const PROVIDER_RULES = [
   { provider: "lark", hosts: ["open.larksuite.com", "open.feishu.cn", "open.feishu-boe.cn"] },
@@ -452,7 +455,7 @@ function parseStatusCode(text) {
 }
 
 function collectLogsContext() {
-  const lines = runOpenclawJsonLines(["logs", "--json", "--limit", "2500", "--max-bytes", "600000"]);
+  const lines = runOpenclawJsonLines(["logs", "--json", "--limit", "5000", "--max-bytes", "1000000"]);
   const entries = lines.filter((x) => x?.type === "log");
   const latestTs = entries
     .map((x) => Date.parse(String(x?.time || "")))
@@ -466,10 +469,71 @@ function collectLogsContext() {
   };
 }
 
-function extractSkillNameFromPath(filePath) {
-  const normalized = String(filePath || "").replace(/\\/g, "/");
-  const m = normalized.match(/\/skills\/([^/]+)\/SKILL\.md$/i);
-  return m ? String(m[1] || "").trim() : null;
+function parseLogSubsystem(obj) {
+  if (typeof obj?.subsystem === "string" && obj.subsystem.trim()) return obj.subsystem.trim();
+  const rawHead = obj?.["0"];
+  if (typeof rawHead !== "string" || !rawHead.trim().startsWith("{")) return "";
+  try {
+    const parsed = JSON.parse(rawHead);
+    if (typeof parsed?.subsystem === "string") return parsed.subsystem.trim();
+  } catch {
+    // ignore
+  }
+  return "";
+}
+
+function readEmbeddedLogEntriesFromRuntime(nowMs, lookbackMs = 48 * 60 * 60 * 1000) {
+  const logDir = "/tmp/openclaw";
+  const threshold = nowMs - lookbackMs;
+  const output = [];
+
+  let files = [];
+  try {
+    files = fs
+      .readdirSync(logDir, { withFileTypes: true })
+      .filter((d) => d.isFile() && /^openclaw-\d{4}-\d{2}-\d{2}\.log$/.test(d.name))
+      .map((d) => path.join(logDir, d.name));
+  } catch {
+    return output;
+  }
+
+  for (const filePath of files) {
+    let content = "";
+    try {
+      content = fs.readFileSync(filePath, "utf8");
+    } catch {
+      continue;
+    }
+    if (!content.trim()) continue;
+
+    const lines = content.split(/\r?\n/);
+    for (const line of lines) {
+      if (!line.trim().startsWith("{")) continue;
+      let obj;
+      try {
+        obj = JSON.parse(line);
+      } catch {
+        continue;
+      }
+
+      const subsystem = parseLogSubsystem(obj);
+      if (subsystem !== "agent/embedded") continue;
+
+      const tsMs = Date.parse(String(obj?.time || obj?._meta?.date || ""));
+      if (!Number.isFinite(tsMs) || tsMs < threshold || tsMs > nowMs + 60_000) continue;
+
+      const message = String(obj?.message || obj?.["1"] || "");
+      if (!message) continue;
+
+      output.push({
+        time: new Date(tsMs).toISOString(),
+        subsystem,
+        message,
+      });
+    }
+  }
+
+  return output;
 }
 
 function listRecentSessionFiles(nowMs, lookbackMs = 24 * 60 * 60 * 1000) {
@@ -509,18 +573,276 @@ function listRecentSessionFiles(nowMs, lookbackMs = 24 * 60 * 60 * 1000) {
     }
   }
 
-  return files.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, 240);
+  return files.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, 360);
 }
 
-function collectSkillUsageMetrics(nowMs) {
-  // Fact-only mode: no inferred usage from session/tool-call heuristics.
-  // Keep empty until provider-native structured skill execution events are wired.
+function isUuidLike(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
+}
+
+function parseSessionScope(sessionKey) {
+  const key = String(sessionKey || "");
+  const channelMatch = key.match(/:channel:([^:]+)(?::thread:([^:]+))?/);
+  if (channelMatch) {
+    return {
+      channel: channelMatch[1] || undefined,
+      thread: channelMatch[2] || undefined,
+    };
+  }
+  const threadMatch = key.match(/:thread:([^:]+)/);
   return {
-    skills_top_24h_inferred: [],
-    skill_calls_total_24h: 0,
-    skill_calls_collection_mode: 'fact-only-not-connected',
-    skill_calls_files_scanned: 0,
-    skill_calls_retained_24h: 0,
+    channel: undefined,
+    thread: threadMatch ? threadMatch[1] : undefined,
+  };
+}
+
+function extractTextFromToolResultContent(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (part && typeof part === "object" && typeof part.text === "string") return part.text;
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function resolveSkillNameFromText(text, knownSkillNameMap) {
+  const raw = String(text || "");
+  if (!raw.trim()) return null;
+  const fm = raw.match(/^---\s*\n([\s\S]{0,1200}?)\n---/);
+  const block = fm ? fm[1] : raw.slice(0, 1200);
+  const nameMatch = block.match(/^name:\s*["']?([^"'\n]+)["']?\s*$/im);
+  if (!nameMatch) return null;
+  const candidate = String(nameMatch[1] || "").trim();
+  if (!candidate) return null;
+  const canonical = knownSkillNameMap.get(candidate.toLowerCase());
+  return canonical || null;
+}
+
+function buildSessionSkillResultIndex(filePath, knownSkillNameMap) {
+  const byToolCallId = new Map();
+  let content = "";
+  try {
+    content = fs.readFileSync(filePath, "utf8");
+  } catch {
+    return byToolCallId;
+  }
+  if (!content.trim()) return byToolCallId;
+
+  for (const line of content.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (entry?.type !== "message") continue;
+    const message = entry?.message;
+    if (!message || message.role !== "toolResult" || message.toolName !== "read") continue;
+
+    const toolCallId = String(message.toolCallId || "").trim();
+    if (!toolCallId) continue;
+
+    const skillName = resolveSkillNameFromText(extractTextFromToolResultContent(message.content), knownSkillNameMap);
+    if (!skillName) continue;
+
+    const tsMs = Date.parse(String(message.timestamp || entry.timestamp || ""));
+    if (!Number.isFinite(tsMs)) continue;
+
+    const outcome = message.isError ? "fail" : "success";
+    const bucket = byToolCallId.get(toolCallId) ?? [];
+    bucket.push({ tsMs, skillName, outcome });
+    byToolCallId.set(toolCallId, bucket);
+  }
+
+  return byToolCallId;
+}
+
+function collectSkillUsageMetrics(nowMs, options = {}) {
+  const knownSkillNameMap = new Map();
+  for (const skillName of Array.isArray(options?.knownSkillNames) ? options.knownSkillNames : []) {
+    const normalized = String(skillName || "").trim();
+    if (!normalized) continue;
+    knownSkillNameMap.set(normalized.toLowerCase(), normalized);
+  }
+
+  const baseLogEntries = Array.isArray(options?.logEntries) ? options.logEntries : collectLogsContext().log_entries;
+  const runtimeEmbeddedEntries = readEmbeddedLogEntriesFromRuntime(nowMs);
+  const logEntries = [...baseLogEntries, ...runtimeEmbeddedEntries];
+  const runToSession = new Map();
+  const readToolEnds = [];
+
+  for (const entry of logEntries) {
+    if (String(entry?.subsystem || "") !== "agent/embedded") continue;
+    const message = String(entry?.message || "");
+    const tsMs = Date.parse(String(entry?.time || ""));
+    if (!Number.isFinite(tsMs)) continue;
+
+    const runSessionMatch = message.match(/runId=([^\s]+).*sessionId=([0-9a-f-]{36})/i);
+    if (runSessionMatch) {
+      const runId = String(runSessionMatch[1] || "").trim();
+      const sessionId = String(runSessionMatch[2] || "").trim().toLowerCase();
+      if (isUuidLike(runId) && isUuidLike(sessionId)) {
+        runToSession.set(runId, sessionId);
+      }
+    }
+
+    const toolEndMatch = message.match(/embedded run tool end:\s*runId=([^\s]+)\s+tool=read\s+toolCallId=([^\s]+)/i);
+    if (!toolEndMatch) continue;
+
+    const runId = String(toolEndMatch[1] || "").trim();
+    const toolCallId = String(toolEndMatch[2] || "").trim();
+    if (!isUuidLike(runId) || !toolCallId) continue;
+    readToolEnds.push({ runId, toolCallId, tsMs });
+  }
+
+  const sessionsById = new Map();
+  try {
+    const sessionsPayload = runOpenclawJson(["sessions", "--all-agents", "--json"]);
+    const sessions = Array.isArray(sessionsPayload?.sessions) ? sessionsPayload.sessions : [];
+    for (const session of sessions) {
+      const sessionId = String(session?.sessionId || "").trim().toLowerCase();
+      const sessionKey = String(session?.key || "").trim();
+      if (!isUuidLike(sessionId) || !sessionKey) continue;
+      sessionsById.set(sessionId, {
+        session_key: sessionKey,
+        ...parseSessionScope(sessionKey),
+      });
+    }
+  } catch {
+    // Keep fact-only fallback when session metadata is unavailable.
+  }
+
+  const requiredSessionIds = new Set(
+    readToolEnds
+      .map((e) => String(runToSession.get(e.runId) || "").toLowerCase())
+      .filter((v) => isUuidLike(v)),
+  );
+
+  const recentFiles = listRecentSessionFiles(nowMs, 48 * 60 * 60 * 1000);
+  const sessionFileById = new Map();
+  for (const file of recentFiles) {
+    const base = path.basename(file.path);
+    const m = base.match(/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i);
+    if (!m) continue;
+    const sessionId = String(m[1] || "").toLowerCase();
+    if (!requiredSessionIds.has(sessionId)) continue;
+    if (!sessionFileById.has(sessionId)) {
+      sessionFileById.set(sessionId, file.path);
+    }
+  }
+
+  const sessionResultIndexById = new Map();
+  for (const [sessionId, filePath] of sessionFileById.entries()) {
+    sessionResultIndexById.set(sessionId, buildSessionSkillResultIndex(filePath, knownSkillNameMap));
+  }
+
+  const factEvents = [];
+  for (const readEnd of readToolEnds) {
+    const sessionId = runToSession.get(readEnd.runId);
+    if (!sessionId) continue;
+    const skillIndex = sessionResultIndexById.get(sessionId);
+    if (!skillIndex) continue;
+
+    const candidates = Array.isArray(skillIndex.get(readEnd.toolCallId)) ? skillIndex.get(readEnd.toolCallId) : [];
+    if (candidates.length === 0) continue;
+
+    const best = candidates
+      .slice()
+      .sort((a, b) => Math.abs(a.tsMs - readEnd.tsMs) - Math.abs(b.tsMs - readEnd.tsMs))[0];
+    if (!best?.skillName) continue;
+
+    const sessionMeta = sessionsById.get(sessionId);
+    const outcome = best.outcome === "fail" ? "fail" : "success";
+    const dedupe_key = hashText(`${readEnd.runId}|${readEnd.toolCallId}|${best.skillName}|${outcome}`);
+
+    factEvents.push({
+      ts_ms: best.tsMs,
+      ts: new Date(best.tsMs).toISOString(),
+      skill_name: best.skillName,
+      outcome,
+      dedupe_key,
+      ...(sessionMeta?.session_key ? { session_key: sessionMeta.session_key } : {}),
+      ...(sessionMeta?.channel ? { channel: sessionMeta.channel } : {}),
+      ...(sessionMeta?.thread ? { thread: sessionMeta.thread } : {}),
+    });
+  }
+
+  const cursor = safeReadJson(skillCursorPath, { last_ts_ms: 0, last_keys: [] });
+  const lastTs = Number(cursor?.last_ts_ms || 0);
+  const lastKeys = new Set(Array.isArray(cursor?.last_keys) ? cursor.last_keys : []);
+
+  const incremental = [];
+  let maxTs = lastTs;
+  let maxTsKeys = new Set(lastKeys);
+
+  const sortedFacts = factEvents.sort((a, b) => Number(a.ts_ms || 0) - Number(b.ts_ms || 0));
+  for (const ev of sortedFacts) {
+    const tsMs = Number(ev.ts_ms || 0);
+    if (!Number.isFinite(tsMs)) continue;
+    if (tsMs < lastTs) continue;
+    if (tsMs === lastTs && lastKeys.has(ev.dedupe_key)) continue;
+
+    incremental.push(ev);
+    if (tsMs > maxTs) {
+      maxTs = tsMs;
+      maxTsKeys = new Set([ev.dedupe_key]);
+    } else if (tsMs === maxTs) {
+      maxTsKeys.add(ev.dedupe_key);
+    }
+  }
+
+  if (incremental.length > 0) {
+    appendJsonl(skillEventsPath, incremental);
+  }
+
+  if (maxTs >= lastTs) {
+    writeJsonAtomic(skillCursorPath, {
+      last_ts_ms: maxTs,
+      last_keys: [...maxTsKeys].slice(-300),
+    });
+  }
+
+  const retainedFrom = nowMs - skillEventRetentionMs;
+  const allEvents = readJsonl(skillEventsPath).filter((e) => Number(e?.ts_ms) >= retainedFrom);
+
+  if (allEvents.length > 0) {
+    const tmp = `${skillEventsPath}.tmp`;
+    fs.writeFileSync(tmp, allEvents.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
+    fs.renameSync(tmp, skillEventsPath);
+  } else if (fs.existsSync(skillEventsPath)) {
+    fs.writeFileSync(skillEventsPath, "", "utf8");
+  }
+
+  const last24hStart = nowMs - 24 * 60 * 60 * 1000;
+  const counts = new Map();
+  let total24h = 0;
+
+  for (const ev of allEvents) {
+    const tsMs = Number(ev?.ts_ms || 0);
+    if (!Number.isFinite(tsMs) || tsMs < last24hStart || tsMs > nowMs) continue;
+    const skillName = String(ev?.skill_name || "").trim();
+    if (!skillName) continue;
+    total24h += 1;
+    counts.set(skillName, (counts.get(skillName) || 0) + 1);
+  }
+
+  const skillsTop = [...counts.entries()]
+    .map(([name, calls_24h]) => ({ name, calls_24h }))
+    .sort((a, b) => b.calls_24h - a.calls_24h)
+    .slice(0, 10);
+
+  const sourceConnected = readToolEnds.length > 0 || allEvents.length > 0;
+  return {
+    skills_top_24h_inferred: skillsTop,
+    skill_calls_total_24h: total24h,
+    skill_calls_collection_mode: sourceConnected ? "fact-event-structured" : "fact-only-not-connected",
+    skill_calls_files_scanned: sessionFileById.size,
+    skill_calls_retained_24h: allEvents.length,
   };
 }
 
@@ -748,7 +1070,6 @@ function collectSnapshot() {
   const logsCtx = collectLogsContext();
   const api = collectApiMetrics(logsCtx.log_entries, nowMs);
   const restarts = collectRestartMetrics(logsCtx.log_entries, nowMs);
-  const skillUsage = collectSkillUsageMetrics(nowMs);
 
   const skillItems = Array.isArray(skills?.skills) ? skills.skills : [];
   const skillsComponents = skillItems.map((x) => ({
@@ -759,6 +1080,10 @@ function collectSnapshot() {
   }));
   const skillsHealthy = skillsComponents.filter((x) => x.eligible && !x.disabled).length;
   const knownSkillNames = new Set(skillsComponents.map((x) => x.name));
+  const skillUsage = collectSkillUsageMetrics(nowMs, {
+    logEntries: logsCtx.log_entries,
+    knownSkillNames,
+  });
   const skillTopReal = (Array.isArray(skillUsage?.skills_top_24h_inferred) ? skillUsage.skills_top_24h_inferred : [])
     .filter((x) => knownSkillNames.has(String(x?.name || '')))
     .slice(0, 10)

@@ -267,8 +267,15 @@ function buildDashboardContract({ snapshot, events, profile }) {
         (skillComponents.length > 0) || typeof snapshot?.healthy_skills === 'number' || typeof snapshot?.skills_healthy === 'number' || typeof snapshot?.skills_healthy_total === 'number'
           ? metric('Derived', healthySkillsValue, String(healthySkillsValue))
           : metricGap(),
-      calls_24h: metric('Derived', asNumber(snapshot?.cron_runs_24h_total, 0), String(asNumber(snapshot?.cron_runs_24h_total, 0))),
-      calls_tokyo_today: metric('Derived', asNumber(snapshot?.cron_runs_today_tokyo_total, 0), String(asNumber(snapshot?.cron_runs_today_tokyo_total, 0))),
+      calls_24h:
+        typeof snapshot?.skill_calls_total_24h === 'number'
+          ? metric('Derived', asNumber(snapshot?.skill_calls_total_24h, 0), String(asNumber(snapshot?.skill_calls_total_24h, 0)))
+          : metricGap(),
+      calls_tokyo_today: metricGap(),
+      collection_mode:
+        typeof snapshot?.skill_calls_collection_mode === 'string' && snapshot.skill_calls_collection_mode.trim()
+          ? snapshot.skill_calls_collection_mode
+          : (skillTop.length > 0 ? 'fact-event-structured' : 'fact-only-not-connected'),
       top: skillTop,
     },
     cron_summary: {
