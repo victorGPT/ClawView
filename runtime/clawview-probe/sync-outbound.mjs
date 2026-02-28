@@ -32,11 +32,22 @@ const batchSize = Math.max(1, Number(process.env.CLAWVIEW_SYNC_BATCH_SIZE || "20
 const ALLOWED_API_EVENT_FIELDS = [
   "ts",
   "provider",
+  "method",
+  "host",
+  "path_template",
   "endpoint_group",
   "status_code",
+  "latency_ms",
+  "is_429",
   "is_failure",
-  "is_rate_limited",
   "dedupe_key",
+  "request_id",
+];
+
+const API_FACT_SENSITIVE_PATTERNS = [
+  /\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/i,
+  /\bbearer\s+[a-z0-9._~+/=-]{8,}/i,
+  /\b(?:token|access_token|refresh_token|id_token|authorization|cookie|set-cookie)\b\s*[:=]\s*["']?[a-z0-9._~+/=-]{8,}/i,
 ];
 
 const ALLOWED_SNAPSHOT_FIELDS = [
@@ -54,6 +65,7 @@ const ALLOWED_SNAPSHOT_FIELDS = [
   "api_call_total_today_tokyo",
   "api_error_rate_24h",
   "api_429_ratio_24h",
+  "api_unknown_rate_24h",
   "endpoint_group_top5_calls_24h",
   "errors_active_count",
   "restart_unexpected_count_24h",
@@ -125,7 +137,11 @@ function pickAllowedFields(input, allowedKeys) {
 }
 
 function sanitizeApiEvent(ev) {
-  return pickAllowedFields(ev, ALLOWED_API_EVENT_FIELDS);
+  const out = pickAllowedFields(ev, ALLOWED_API_EVENT_FIELDS);
+  if (API_FACT_SENSITIVE_PATTERNS.some((pattern) => pattern.test(JSON.stringify(out)))) {
+    throw new Error("api event contains sensitive payload pattern");
+  }
+  return out;
 }
 
 function sanitizeSnapshot(snap) {

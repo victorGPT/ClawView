@@ -91,10 +91,41 @@ function normalizeSnapshotRow(row) {
 function normalizeApiEventRow(row) {
   if (!row || typeof row !== 'object') return null;
   const payload = row.payload && typeof row.payload === 'object' ? row.payload : row;
-  const generatedAt = row.generated_at || row.generatedAt || null;
+  const generatedAt = row.generated_at || row.generatedAt || payload.generated_at || payload.generatedAt || null;
+  const ts = toISOStringSafe(payload.ts || generatedAt);
+  if (!ts) return null;
+
+  const providerRaw = String(payload.provider || '').trim().toLowerCase();
+  const endpointRaw = String(payload.endpoint_group || payload.endpointGroup || '').trim().toLowerCase();
+  const provider = providerRaw === 'other' || providerRaw === 'others' ? 'unknown' : (providerRaw || 'unknown');
+  const endpointGroup =
+    endpointRaw === 'other' || endpointRaw === 'others' ? 'unknown' : (endpointRaw || 'unknown');
+
+  const statusCode =
+    typeof payload.status_code === 'number' && Number.isFinite(payload.status_code)
+      ? payload.status_code
+      : null;
+  const is429 =
+    typeof payload.is_429 === 'boolean'
+      ? payload.is_429
+      : typeof payload.is_rate_limited === 'boolean'
+        ? payload.is_rate_limited
+        : statusCode === 429;
+  const isFailure =
+    typeof payload.is_failure === 'boolean'
+      ? payload.is_failure
+      : statusCode != null
+        ? statusCode >= 400
+        : false;
+
   return {
     ...payload,
-    ts: payload.ts || generatedAt,
+    ts,
+    provider,
+    endpoint_group: endpointGroup,
+    status_code: statusCode,
+    is_429: is429,
+    is_failure: isFailure,
     generated_at: generatedAt,
   };
 }
@@ -146,8 +177,10 @@ function buildApiTop(events, topN) {
   const grouped = new Map();
 
   for (const ev of events) {
-    const provider = ev.provider || 'other';
-    const endpoint = ev.endpoint_group || 'others';
+    const providerRaw = String(ev.provider || '').trim().toLowerCase();
+    const endpointRaw = String(ev.endpoint_group || '').trim().toLowerCase();
+    const provider = providerRaw === 'other' || providerRaw === 'others' ? 'unknown' : (providerRaw || 'unknown');
+    const endpoint = endpointRaw === 'other' || endpointRaw === 'others' ? 'unknown' : (endpointRaw || 'unknown');
     const key = `${provider}/${endpoint}`;
     grouped.set(key, (grouped.get(key) || 0) + 1);
   }
@@ -207,11 +240,26 @@ function buildDashboardContract({ snapshot, events, profile }) {
     : buildTenBins(Array.isArray(snapshot?.history) ? snapshot.history : [], now.getTime());
 
   const apiSeries = buildTenBins(events, now.getTime());
-  const throttleSeries = buildTenBins(events.filter((e) => e.is_rate_limited), now.getTime());
+  const throttleSeries = buildTenBins(events.filter((e) => e.is_429), now.getTime());
 
+  const apiCollectionMode =
+    typeof snapshot?.api_collection_mode === 'string' && snapshot.api_collection_mode.trim()
+      ? snapshot.api_collection_mode
+      : 'fact-only-not-connected';
+  const apiFactConnected = apiCollectionMode === 'fact-event-structured';
   const apiTotal24h = events.length;
+  const apiTotalTokyoToday =
+    typeof snapshot?.api_call_total_today_tokyo === 'number'
+      ? asNumber(snapshot.api_call_total_today_tokyo, 0)
+      : apiTotal24h;
   const apiErr24h = events.filter((e) => e.is_failure).length;
-  const api42924h = events.filter((e) => e.is_rate_limited).length;
+  const api42924h = events.filter((e) => e.is_429).length;
+  const apiUnknown24h = events.filter(
+    (e) => String(e.provider || "").toLowerCase() === "unknown" || String(e.endpoint_group || "").toLowerCase() === "unknown",
+  ).length;
+  const apiErrorRate24h = apiTotal24h > 0 ? apiErr24h / apiTotal24h : 0;
+  const api429Ratio24h = apiTotal24h > 0 ? api42924h / apiTotal24h : 0;
+  const apiUnknownRate24h = apiTotal24h > 0 ? apiUnknown24h / apiTotal24h : 0;
 
   const cronStormTop = Array.isArray(snapshot?.cron_storm_top5_5m)
     ? snapshot.cron_storm_top5_5m.map((x) => ({
@@ -253,8 +301,8 @@ function buildDashboardContract({ snapshot, events, profile }) {
       openclaw_system_anomaly: openclawSystemAnomaly,
       clawview_pipeline_anomaly: clawviewPipelineAnomaly,
       api_429_ratio_24h:
-        apiTotal24h > 0
-          ? metric('Derived', api42924h / apiTotal24h, `${((api42924h / apiTotal24h) * 100).toFixed(1)}%`)
+        apiFactConnected
+          ? metric('Derived', api429Ratio24h, `${(api429Ratio24h * 100).toFixed(1)}%`)
           : metricGap(),
     },
     trends: {
@@ -264,11 +312,11 @@ function buildDashboardContract({ snapshot, events, profile }) {
         value,
       })),
       api_calls_series_24h:
-        apiSeries.some((x) => x > 0)
+        apiFactConnected
           ? { readiness: 'Derived', series: apiSeries.map((value, i) => ({ ts: new Date(now.getTime() - (9 - i) * (24 * 60 * 60 * 1000) / 10).toISOString(), value })) }
           : { readiness: 'Gap', series: [], display: '--', note: GAP_NOTE },
       api_429_series_24h:
-        throttleSeries.some((x) => x > 0)
+        apiFactConnected
           ? { readiness: 'Derived', series: throttleSeries.map((value, i) => ({ ts: new Date(now.getTime() - (9 - i) * (24 * 60 * 60 * 1000) / 10).toISOString(), value })) }
           : { readiness: 'Gap', series: [], display: '--', note: GAP_NOTE },
     },
@@ -308,15 +356,17 @@ function buildDashboardContract({ snapshot, events, profile }) {
     },
     api_summary: {
       api_call_total_24h:
-        apiTotal24h > 0 ? metric('Derived', apiTotal24h, String(apiTotal24h)) : metricGap(),
+        apiFactConnected ? metric('Derived', apiTotal24h, String(apiTotal24h)) : metricGap(),
       api_call_total_tokyo_today:
-        apiTotal24h > 0 ? metric('Derived', apiTotal24h, String(apiTotal24h)) : metricGap(),
+        apiFactConnected ? metric('Derived', apiTotalTokyoToday, String(apiTotalTokyoToday)) : metricGap(),
       api_error_rate_24h:
-        apiTotal24h > 0 ? metric('Derived', apiErr24h / apiTotal24h, `${((apiErr24h / apiTotal24h) * 100).toFixed(1)}%`) : metricGap(),
+        apiFactConnected ? metric('Derived', apiErrorRate24h, `${(apiErrorRate24h * 100).toFixed(1)}%`) : metricGap(),
       api_429_ratio_24h:
-        apiTotal24h > 0 ? metric('Derived', api42924h / apiTotal24h, `${((api42924h / apiTotal24h) * 100).toFixed(1)}%`) : metricGap(),
+        apiFactConnected ? metric('Derived', api429Ratio24h, `${(api429Ratio24h * 100).toFixed(1)}%`) : metricGap(),
+      api_unknown_rate_24h:
+        apiFactConnected ? metric('Derived', apiUnknownRate24h, `${(apiUnknownRate24h * 100).toFixed(1)}%`) : metricGap(),
       endpoint_group_top:
-        endpointTop.length > 0
+        apiFactConnected
           ? { readiness: 'Derived', top: endpointTop }
           : { readiness: 'Gap', top: [], display: '--', note: GAP_NOTE },
     },

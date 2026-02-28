@@ -290,6 +290,7 @@ function mapDashboardContract(raw: unknown): DashboardData | null {
       callTokyoToday: parseMetric(api.api_call_total_tokyo_today ?? api.callTokyoToday, metricGap(), toNumberOrNull),
       errorRate24h: parseMetric(api.api_error_rate_24h ?? api.errorRate24h, metricGap(), toNumberOrNull),
       throttleRate24h: parseMetric(api.api_429_ratio_24h ?? api.throttleRate24h, metricGap(), toNumberOrNull),
+      unknownRate24h: parseMetric(api.api_unknown_rate_24h ?? api.unknownRate24h, metricGap(), toNumberOrNull),
       endpointTop,
     },
   };

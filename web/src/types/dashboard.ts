@@ -57,6 +57,7 @@ export interface DashboardData {
     callTokyoToday: MetricValue<number | null>;
     errorRate24h: MetricValue<number | null>;
     throttleRate24h: MetricValue<number | null>;
+    unknownRate24h: MetricValue<number | null>;
     endpointTop: Array<{ name: string; calls24h: number; note?: string }>;
   };
 }

@@ -58,6 +58,7 @@ export const dashboardData: DashboardData = {
     callTokyoToday: { readiness: 'Gap', value: null, display: '--', note: '数据未接入' },
     errorRate24h: { readiness: 'Gap', value: null, display: '--', note: '数据未接入' },
     throttleRate24h: { readiness: 'Gap', value: null, display: '--', note: '数据未接入' },
+    unknownRate24h: { readiness: 'Gap', value: null, display: '--', note: '数据未接入' },
     endpointTop: [
       { name: '--', calls24h: 0, note: '数据未接入' },
       { name: '--', calls24h: 0, note: '数据未接入' },

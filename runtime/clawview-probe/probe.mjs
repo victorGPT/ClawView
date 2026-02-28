@@ -26,23 +26,46 @@ const dayTag = now.toISOString().slice(0, 10);
 const snapshotPath = path.join(outDir, `snapshots-${dayTag}.jsonl`);
 const runReportPath = path.join(outDir, `report-${dayTag}.json`);
 const lockPath = path.join(outDir, "probe.lock");
-const apiCursorPath = path.join(outDir, "api-cursor.json");
+const apiFactsPath = path.join(outDir, "api-facts.jsonl");
 const apiEventsPath = path.join(outDir, "api-events.jsonl");
 const apiEventRetentionMs = 48 * 60 * 60 * 1000;
 const skillCursorPath = path.join(outDir, "skill-cursor.json");
 const skillEventsPath = path.join(outDir, "skill-events.jsonl");
 const skillEventRetentionMs = 48 * 60 * 60 * 1000;
 
-const PROVIDER_RULES = [
-  { provider: "lark", hosts: ["open.larksuite.com", "open.feishu.cn", "open.feishu-boe.cn"] },
-  { provider: "discord", hosts: ["discord.com", "discordapp.com", "cdn.discordapp.com"] },
-  { provider: "github", hosts: ["api.github.com", "github.com"] },
-  { provider: "slack", hosts: ["slack.com", "slack-edge.com"] },
-  { provider: "telegram", hosts: ["api.telegram.org"] },
-  { provider: "whatsapp", hosts: ["graph.facebook.com", "api.whatsapp.com"] },
-  { provider: "openai", hosts: ["api.openai.com"] },
-  { provider: "anthropic", hosts: ["api.anthropic.com"] },
-  { provider: "google", hosts: ["generativelanguage.googleapis.com", "api.google.com"] },
+const API_EVENT_ALLOWED_FIELDS = [
+  "ts",
+  "provider",
+  "method",
+  "host",
+  "path_template",
+  "endpoint_group",
+  "status_code",
+  "latency_ms",
+  "is_429",
+  "is_failure",
+  "dedupe_key",
+  "request_id",
+];
+
+const API_FACT_SENSITIVE_PATTERNS = [
+  /\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/i,
+  /\bbearer\s+[a-z0-9._~+/=-]{8,}/i,
+  /\b(?:token|access_token|refresh_token|id_token|authorization|cookie|set-cookie)\b\s*[:=]\s*["']?[a-z0-9._~+/=-]{8,}/i,
+];
+
+const CRITICAL_SYSTEM_ERROR_PATTERNS = [
+  /gateway failed to start/i,
+  /\bpanic\b/i,
+  /out of memory|\boom\b/i,
+  /uncaught/i,
+  /\bcrash\b/i,
+  /non[- ]?zero exit/i,
+  /secrets_reloader_degraded/i,
+  /port \d+ is already in use/i,
+  /gateway already running/i,
+  /shutdown timed out/i,
+  /recovery time budget exceeded/i,
 ];
 
 function sleep(ms) {
@@ -162,6 +185,12 @@ function normalizeErrorFingerprint(message) {
 
 function oneLine(text = "") {
   return String(text).replace(/\s+/g, " ").trim();
+}
+
+function isCriticalSystemErrorMessage(message = "") {
+  const msg = oneLine(message);
+  if (!msg) return false;
+  return CRITICAL_SYSTEM_ERROR_PATTERNS.some((p) => p.test(msg));
 }
 
 function countConfiguredChannels(configObj) {
@@ -374,6 +403,7 @@ function collectErrorMetrics() {
   const lines = Array.isArray(logs?.lines) ? logs.lines : [];
 
   const byFp = new Map();
+  const byCriticalFp = new Map();
   const nowMs = Date.now();
   const activeWindowMs = 60 * 60 * 1000;
 
@@ -391,9 +421,24 @@ function collectErrorMetrics() {
       if (!record.last_seen || tsMs > Date.parse(record.last_seen)) record.last_seen = new Date(tsMs).toISOString();
     }
     byFp.set(fp, record);
+
+    if (isCriticalSystemErrorMessage(msg)) {
+      const critical = byCriticalFp.get(fp) ?? { count: 0, first_seen: null, last_seen: null };
+      critical.count += 1;
+      if (Number.isFinite(tsMs)) {
+        if (!critical.first_seen || tsMs < Date.parse(critical.first_seen)) critical.first_seen = new Date(tsMs).toISOString();
+        if (!critical.last_seen || tsMs > Date.parse(critical.last_seen)) critical.last_seen = new Date(tsMs).toISOString();
+      }
+      byCriticalFp.set(fp, critical);
+    }
   }
 
   const top = [...byFp.entries()]
+    .map(([fingerprint, v]) => ({ fingerprint, ...v }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+
+  const criticalTop = [...byCriticalFp.entries()]
     .map(([fingerprint, v]) => ({ fingerprint, ...v }))
     .sort((a, b) => b.count - a.count)
     .slice(0, 10);
@@ -404,55 +449,25 @@ function collectErrorMetrics() {
     return Number.isFinite(ts) && nowMs - ts <= activeWindowMs;
   }).length;
 
+  const criticalActiveCount = criticalTop.filter((item) => {
+    if (!item.last_seen) return false;
+    const ts = Date.parse(item.last_seen);
+    return Number.isFinite(ts) && nowMs - ts <= activeWindowMs;
+  }).length;
+
   return {
     errors_active_count: activeCount,
+    errors_critical_active_count: criticalActiveCount,
     error_top: top,
+    error_critical_top: criticalTop,
     error_log_window_lines: lines.length,
   };
 }
 
-function extractFirstUrl(text) {
-  const m = String(text || "").match(/https?:\/\/[^\s"')]+/i);
-  return m ? m[0] : null;
-}
-
-function detectProvider(hostname = "") {
-  const host = String(hostname || "").toLowerCase();
-  for (const rule of PROVIDER_RULES) {
-    if (rule.hosts.some((h) => host === h || host.endsWith(`.${h}`))) {
-      return rule.provider;
-    }
-  }
-  return "other";
-}
-
-function classifyEndpointGroup(pathname = "") {
-  const p = String(pathname || "").toLowerCase();
-  if (p.startsWith("/auth") || p.includes("/login") || p.includes("/token")) return "auth";
-  if (p.startsWith("/users") || p.includes("/profile")) return "account";
-  if (p.includes("/contacts")) return "contacts";
-  if (p.includes("/conversations") || p.includes("/threads")) return "conversations";
-  if (p.includes("/messages/send") || p.includes("/messages.create") || p.includes("/chat.postmessage")) return "message_send";
-  if (p.includes("/messages") || p.includes("/im/v1/messages")) return "message_receive";
-  if (p.includes("/media") || p.includes("/files")) return "media";
-  if (p.includes("/webhook")) return "webhooks";
-  if (p.includes("/jobs") || p.includes("/scheduler") || p.includes("/cron")) return "scheduler";
-  if (p.includes("/integrations") || p.includes("/provider")) return "integrations";
-  if (p.includes("/admin") || p.includes("/config")) return "admin_config";
-  if (p.includes("/health") || p.includes("/ready") || p.includes("/metrics")) return "health_metrics";
-  return "others";
-}
-
-function parseStatusCode(text) {
-  const s = String(text || "");
-  const m1 = s.match(/status\s*code\s*(\d{3})/i);
-  if (m1) return Number(m1[1]);
-  const m2 = s.match(/\b(\d{3})\b/);
-  if (m2) {
-    const code = Number(m2[1]);
-    if (code >= 100 && code <= 599) return code;
-  }
-  return null;
+function containsSensitiveApiFactValue(value = "") {
+  const text = String(value || "");
+  if (!text.trim()) return false;
+  return API_FACT_SENSITIVE_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 function collectLogsContext() {
@@ -872,86 +887,149 @@ function collectSkillUsageMetrics(nowMs, options = {}) {
   };
 }
 
-function toApiEvent(entry) {
-  const ts = Date.parse(String(entry?.time || ""));
-  if (!Number.isFinite(ts)) return null;
+function sanitizeApiFactFields(raw) {
+  const out = {};
+  for (const field of API_EVENT_ALLOWED_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(raw, field)) {
+      out[field] = raw[field];
+    }
+  }
+  return out;
+}
 
-  const text = oneLine(`${entry?.message || ""} ${entry?.raw || ""}`);
-  const urlText = extractFirstUrl(text);
-  if (!urlText) return null;
-
-  let parsed;
-  try {
-    parsed = new URL(urlText);
-  } catch {
-    return null;
+function normalizeApiFactEvent(raw) {
+  if (!raw || typeof raw !== "object") {
+    return { event: null, reason: "invalid" };
   }
 
-  const provider = detectProvider(parsed.hostname);
-  const endpointGroup = classifyEndpointGroup(parsed.pathname);
-  const statusCode = parseStatusCode(text);
-  const level = String(entry?.level || "").toLowerCase();
-  const isRateLimited = statusCode === 429 || /\b429\b|rate\s*limit|throttl|too\s*many\s*requests/i.test(text);
-  const isFailure = (statusCode != null && statusCode >= 400) || level === "error" || (level === "warn" && (statusCode != null || /error|fail|exception/i.test(text)));
+  if (containsSensitiveApiFactValue(JSON.stringify(raw))) {
+    return { event: null, reason: "sensitive" };
+  }
+  const rawKeys = Object.keys(raw);
+  if (rawKeys.some((key) => !API_EVENT_ALLOWED_FIELDS.includes(key))) {
+    return { event: null, reason: "invalid" };
+  }
 
-  const dedupeBase = `${entry?.time || ""}|${entry?.level || ""}|${provider}|${endpointGroup}|${statusCode ?? ""}|${isRateLimited ? 1 : 0}|${normalizeErrorFingerprint(text).slice(0, 96)}`;
-  const dedupeKey = hashText(dedupeBase);
+  const sanitized = sanitizeApiFactFields(raw);
+  if (containsSensitiveApiFactValue(JSON.stringify(sanitized))) {
+    return { event: null, reason: "sensitive" };
+  }
+
+  const tsMs = toMs(sanitized.ts);
+  if (!Number.isFinite(tsMs)) {
+    return { event: null, reason: "invalid" };
+  }
+
+  const providerRaw = String(sanitized.provider || "").trim().toLowerCase();
+  const method = String(sanitized.method || "").trim().toUpperCase();
+  const host = String(sanitized.host || "").trim().toLowerCase();
+  const pathTemplate = String(sanitized.path_template || "").trim().toLowerCase();
+  const endpointGroupRaw = String(sanitized.endpoint_group || "").trim().toLowerCase();
+  const dedupeKey = String(sanitized.dedupe_key || "").trim();
+  const provider = providerRaw === "other" || providerRaw === "others" ? "unknown" : providerRaw;
+  const endpointGroup =
+    endpointGroupRaw === "other" || endpointGroupRaw === "others" ? "unknown" : endpointGroupRaw;
+
+  if (!provider || !method || !host || !pathTemplate || !endpointGroup || !dedupeKey) {
+    return { event: null, reason: "invalid" };
+  }
+
+  if (
+    containsSensitiveApiFactValue(provider) ||
+    containsSensitiveApiFactValue(method) ||
+    containsSensitiveApiFactValue(host) ||
+    containsSensitiveApiFactValue(pathTemplate) ||
+    containsSensitiveApiFactValue(endpointGroup)
+  ) {
+    return { event: null, reason: "sensitive" };
+  }
+
+  const statusCode =
+    typeof sanitized.status_code === "number" &&
+    Number.isFinite(sanitized.status_code) &&
+    sanitized.status_code >= 100 &&
+    sanitized.status_code <= 599
+      ? sanitized.status_code
+      : null;
+
+  const latencyMs =
+    typeof sanitized.latency_ms === "number" && Number.isFinite(sanitized.latency_ms)
+      ? Math.max(0, Math.round(sanitized.latency_ms))
+      : 0;
+
+  const is429 = sanitized.is_429 === true;
+  const isFailure =
+    typeof sanitized.is_failure === "boolean"
+      ? sanitized.is_failure
+      : statusCode == null
+        ? true
+        : statusCode >= 400;
+
+  const requestIdRaw = String(sanitized.request_id || "").trim();
+  const requestId =
+    requestIdRaw && /^[a-z0-9._:-]{6,128}$/i.test(requestIdRaw) && !containsSensitiveApiFactValue(requestIdRaw)
+      ? requestIdRaw
+      : "";
 
   return {
-    ts_ms: ts,
-    ts: new Date(ts).toISOString(),
-    provider,
-    endpoint_group: endpointGroup,
-    status_code: statusCode,
-    is_failure: isFailure,
-    is_rate_limited: isRateLimited,
-    dedupe_key: dedupeKey,
+    event: {
+      ts: new Date(tsMs).toISOString(),
+      ts_ms: tsMs,
+      provider,
+      method,
+      host,
+      path_template: pathTemplate,
+      endpoint_group: endpointGroup,
+      status_code: statusCode,
+      latency_ms: latencyMs,
+      is_429: is429,
+      is_failure: isFailure,
+      dedupe_key: dedupeKey,
+      ...(requestId ? { request_id: requestId } : {}),
+    },
+    reason: "ok",
   };
 }
 
-function collectApiMetrics(logEntries, nowMs) {
-  const cursor = safeReadJson(apiCursorPath, { last_ts_ms: 0, last_keys: [] });
-  const lastTs = Number(cursor?.last_ts_ms || 0);
-  const lastKeys = new Set(Array.isArray(cursor?.last_keys) ? cursor.last_keys : []);
+function loadApiFactEvents(nowMs) {
+  const retainedFrom = nowMs - apiEventRetentionMs;
+  const upperBound = nowMs + 60_000;
 
-  const sorted = [...logEntries].sort((a, b) => Date.parse(String(a?.time || "")) - Date.parse(String(b?.time || "")));
-  const incremental = [];
+  const rawFacts = readJsonl(apiFactsPath);
+  let validFactCount = 0;
+  let sensitiveDropped = 0;
+  let invalidDropped = 0;
+  const dedupedByKey = new Map();
 
-  let maxTs = lastTs;
-  let maxTsKeys = new Set(lastKeys);
+  for (const raw of rawFacts) {
+    const normalized = normalizeApiFactEvent(raw);
+    if (!normalized.event) {
+      if (normalized.reason === "sensitive") sensitiveDropped += 1;
+      else invalidDropped += 1;
+      continue;
+    }
+    validFactCount += 1;
+    const event = normalized.event;
 
-  for (const entry of sorted) {
-    const ev = toApiEvent(entry);
-    if (!ev) continue;
+    if (event.ts_ms < retainedFrom || event.ts_ms > upperBound) continue;
 
-    if (ev.ts_ms < lastTs) continue;
-    if (ev.ts_ms === lastTs && lastKeys.has(ev.dedupe_key)) continue;
-
-    incremental.push(ev);
-
-    if (ev.ts_ms > maxTs) {
-      maxTs = ev.ts_ms;
-      maxTsKeys = new Set([ev.dedupe_key]);
-    } else if (ev.ts_ms === maxTs) {
-      maxTsKeys.add(ev.dedupe_key);
+    const previous = dedupedByKey.get(event.dedupe_key);
+    if (!previous || event.ts_ms > previous.ts_ms) {
+      dedupedByKey.set(event.dedupe_key, event);
     }
   }
 
-  if (incremental.length > 0) {
-    appendJsonl(apiEventsPath, incremental);
+  const allEvents = [...dedupedByKey.values()].sort((a, b) => Number(a.ts_ms || 0) - Number(b.ts_ms || 0));
+  const retainedFacts = allEvents.map((event) => sanitizeApiFactFields(event));
+
+  if (retainedFacts.length > 0) {
+    const tmpFacts = `${apiFactsPath}.tmp`;
+    fs.writeFileSync(tmpFacts, retainedFacts.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
+    fs.renameSync(tmpFacts, apiFactsPath);
+  } else if (fs.existsSync(apiFactsPath)) {
+    fs.writeFileSync(apiFactsPath, "", "utf8");
   }
 
-  if (maxTs >= lastTs) {
-    writeJsonAtomic(apiCursorPath, {
-      last_ts_ms: maxTs,
-      last_keys: [...maxTsKeys].slice(-300),
-    });
-  }
-
-  const retainedFrom = nowMs - apiEventRetentionMs;
-  const allEvents = readJsonl(apiEventsPath).filter((e) => Number(e?.ts_ms) >= retainedFrom);
-
-  // Compact on each run to keep file bounded.
   if (allEvents.length > 0) {
     const tmp = `${apiEventsPath}.tmp`;
     fs.writeFileSync(tmp, allEvents.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
@@ -960,6 +1038,16 @@ function collectApiMetrics(logEntries, nowMs) {
     fs.writeFileSync(apiEventsPath, "", "utf8");
   }
 
+  return {
+    events: allEvents,
+    sourceConnected: rawFacts.length > 0,
+    validFactCount,
+    sensitiveDropped,
+    invalidDropped,
+  };
+}
+
+function computeApiMetricsFromFactEvents(events, nowMs, sourceConnected, stats = {}) {
   const last24hStart = nowMs - 24 * 60 * 60 * 1000;
   const tokyo = tokyoDayRangeMs(nowMs);
 
@@ -968,10 +1056,11 @@ function collectApiMetrics(logEntries, nowMs) {
   let success24h = 0;
   let failed24h = 0;
   let rateLimited24h = 0;
+  let unknown24h = 0;
   let recentErrorTs = null;
   const byGroup = new Map();
 
-  for (const ev of allEvents) {
+  for (const ev of events) {
     const ts = Number(ev.ts_ms || 0);
     if (!Number.isFinite(ts)) continue;
 
@@ -979,10 +1068,10 @@ function collectApiMetrics(logEntries, nowMs) {
     const inToday = ts >= tokyo.startMs && ts < tokyo.endMs;
     if (!in24h && !inToday) continue;
 
-    const key = `${ev.provider}::${ev.endpoint_group}`;
+    const key = `${ev.provider}/${ev.endpoint_group}`;
     const g = byGroup.get(key) ?? {
       provider: ev.provider,
-      endpoint_group: ev.endpoint_group,
+      endpoint_group: key,
       calls_24h: 0,
       calls_today_tokyo: 0,
       failures_24h: 0,
@@ -992,6 +1081,11 @@ function collectApiMetrics(logEntries, nowMs) {
     if (in24h) {
       total24h += 1;
       g.calls_24h += 1;
+
+      if (ev.provider === "unknown" || ev.endpoint_group === "unknown") {
+        unknown24h += 1;
+      }
+
       if (ev.is_failure) {
         failed24h += 1;
         g.failures_24h += 1;
@@ -999,7 +1093,8 @@ function collectApiMetrics(logEntries, nowMs) {
       } else {
         success24h += 1;
       }
-      if (ev.is_rate_limited) {
+
+      if (ev.is_429) {
         rateLimited24h += 1;
         g.rate_limits_24h += 1;
       }
@@ -1014,8 +1109,9 @@ function collectApiMetrics(logEntries, nowMs) {
   }
 
   const groupTop5 = [...byGroup.values()].sort((a, b) => b.calls_24h - a.calls_24h).slice(0, 5);
+  const hasEventStore = sourceConnected;
+  const latestTs = events.length > 0 ? Number(events[events.length - 1]?.ts_ms || 0) : null;
 
-  const hasEventStore = allEvents.length > 0;
   return {
     api_metrics_available: hasEventStore,
     api_call_total_24h: hasEventStore ? total24h : null,
@@ -1025,13 +1121,26 @@ function collectApiMetrics(logEntries, nowMs) {
     api_rate_limit_total_24h: hasEventStore ? rateLimited24h : null,
     api_error_rate_24h: hasEventStore && total24h > 0 ? failed24h / total24h : hasEventStore ? 0 : null,
     api_429_ratio_24h: hasEventStore && total24h > 0 ? rateLimited24h / total24h : hasEventStore ? 0 : null,
+    api_unknown_rate_24h: hasEventStore && total24h > 0 ? unknown24h / total24h : hasEventStore ? 0 : null,
     endpoint_group_top5_calls_24h: hasEventStore ? groupTop5 : null,
     api_recent_error_time: recentErrorTs ? new Date(recentErrorTs).toISOString() : null,
-    api_collection_mode: "hook-cursor-log-inferred",
-    api_events_new_since_last: incremental.length,
-    api_events_retained: allEvents.length,
-    api_cursor_ts_ms: maxTs,
+    api_collection_mode: hasEventStore ? "fact-event-structured" : "fact-only-not-connected",
+    api_events_new_since_last: null,
+    api_events_retained: events.length,
+    api_cursor_ts_ms: Number.isFinite(latestTs) ? latestTs : null,
+    api_events_valid_fact_total: Number(stats.validFactCount || 0),
+    api_events_sensitive_dropped: Number(stats.sensitiveDropped || 0),
+    api_events_invalid_dropped: Number(stats.invalidDropped || 0),
   };
+}
+
+function collectApiMetrics(nowMs) {
+  const { events, sourceConnected, validFactCount, sensitiveDropped, invalidDropped } = loadApiFactEvents(nowMs);
+  return computeApiMetricsFromFactEvents(events, nowMs, sourceConnected, {
+    validFactCount,
+    sensitiveDropped,
+    invalidDropped,
+  });
 }
 
 function collectRestartMetrics(logEntries, nowMs) {
@@ -1078,14 +1187,32 @@ function toCoverageValue(v) {
   return true;
 }
 
+function computeServiceStatusNow(params) {
+  const gatewayRpcOk = params?.gatewayRpcOk === true;
+  const restartUnexpectedCount24h = Number(params?.restartUnexpectedCount24h || 0);
+  const criticalSystemErrorActiveCount = Number(params?.criticalSystemErrorActiveCount || 0);
+
+  if (!gatewayRpcOk) return "down";
+  if (
+    (Number.isFinite(restartUnexpectedCount24h) && restartUnexpectedCount24h > 0) ||
+    (Number.isFinite(criticalSystemErrorActiveCount) && criticalSystemErrorActiveCount > 0)
+  ) {
+    return "degraded";
+  }
+  return "running";
+}
+
 function computeAnomalyFlags(params) {
   const serviceStatusNow = String(params?.serviceStatusNow || "running").trim();
   const restartUnexpectedCount24h = Number(params?.restartUnexpectedCount24h || 0);
+  const criticalSystemErrorActiveCount = Number(params?.criticalSystemErrorActiveCount || 0);
   const skillCallsCollectionMode = String(params?.skillCallsCollectionMode || "").trim();
 
   return {
     openclaw_system_anomaly:
-      serviceStatusNow === "down" || (Number.isFinite(restartUnexpectedCount24h) && restartUnexpectedCount24h > 0),
+      serviceStatusNow === "down" ||
+      (Number.isFinite(restartUnexpectedCount24h) && restartUnexpectedCount24h > 0) ||
+      (Number.isFinite(criticalSystemErrorActiveCount) && criticalSystemErrorActiveCount > 0),
     clawview_pipeline_anomaly: skillCallsCollectionMode !== "fact-event-structured",
   };
 }
@@ -1106,7 +1233,7 @@ function collectSnapshot() {
   const cron = collectCronMetrics(nowMs);
   const errors = collectErrorMetrics();
   const logsCtx = collectLogsContext();
-  const api = collectApiMetrics(logsCtx.log_entries, nowMs);
+  const api = collectApiMetrics(nowMs);
   const restarts = collectRestartMetrics(logsCtx.log_entries, nowMs);
 
   const skillItems = Array.isArray(skills?.skills) ? skills.skills : [];
@@ -1128,11 +1255,16 @@ function collectSnapshot() {
     .map((x) => ({ name: String(x.name), calls_24h: Number(x.calls_24h || 0) }));
   const skillsTop24h = skillTopReal;
 
-  const serviceStatusNow = gateway.gateway_rpc_ok ? (errors.errors_active_count > 0 ? "degraded" : "running") : "down";
+  const serviceStatusNow = computeServiceStatusNow({
+    gatewayRpcOk: gateway.gateway_rpc_ok,
+    restartUnexpectedCount24h: restarts.restart_unexpected_count_24h,
+    criticalSystemErrorActiveCount: errors.errors_critical_active_count,
+  });
   const dataFreshnessDelayMin = logsCtx.latest_log_ts_ms == null ? null : Math.max(0, Math.round((nowMs - logsCtx.latest_log_ts_ms) / 60000));
   const anomalyFlags = computeAnomalyFlags({
     serviceStatusNow,
     restartUnexpectedCount24h: restarts.restart_unexpected_count_24h,
+    criticalSystemErrorActiveCount: errors.errors_critical_active_count,
     skillCallsCollectionMode: skillUsage.skill_calls_collection_mode,
   });
 
@@ -1181,7 +1313,7 @@ function collectSnapshot() {
     // Cron
     ...cron,
 
-    // API (log inferred)
+    // API (fact stream)
     ...api,
 
     // Errors / restarts
@@ -1194,11 +1326,12 @@ function collectSnapshot() {
     p0_core_filled: p0Filled,
     p0_core_total: p0Total,
 
-    probe_version: "v1.2",
+    probe_version: "v1.3",
     probe_notes: [
-      "API metrics use hook-triggered cursor incremental extraction from gateway logs",
+      "API metrics consume structured provider API fact events only",
       "Skill Top24h uses fact-only source; no inferred usage when facts are unavailable",
-      "API metrics remain best-effort until provider-level structured API events are available",
+      "service_status_now is based on gateway RPC + unexpected restart + critical system errors (not generic warn/error noise)",
+      "When API fact stream is not connected, API metrics explicitly stay Gap",
       "p0_core_coverage_ratio is computed from probe-populated core fields",
     ],
   };
@@ -1336,7 +1469,13 @@ export const __test = {
   toMs,
   resolveSkillNameFromText,
   buildSessionSkillResultIndex,
+  containsSensitiveApiFactValue,
+  sanitizeApiFactFields,
+  normalizeApiFactEvent,
+  computeApiMetricsFromFactEvents,
+  computeServiceStatusNow,
   computeAnomalyFlags,
+  isCriticalSystemErrorMessage,
 };
 
 async function main() {
