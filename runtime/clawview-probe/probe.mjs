@@ -609,6 +609,20 @@ function extractTextFromToolResultContent(content) {
     .join("\n");
 }
 
+function toMs(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 1e12 ? value : value * 1000;
+  }
+  const s = String(value ?? "").trim();
+  if (!s) return NaN;
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const n = Number(s);
+    if (!Number.isFinite(n)) return NaN;
+    return n > 1e12 ? n : n * 1000;
+  }
+  return Date.parse(s);
+}
+
 function resolveSkillNameFromText(text, knownSkillNameMap) {
   const raw = String(text || "");
   if (!raw.trim()) return null;
@@ -650,7 +664,7 @@ function buildSessionSkillResultIndex(filePath, knownSkillNameMap) {
     const skillName = resolveSkillNameFromText(extractTextFromToolResultContent(message.content), knownSkillNameMap);
     if (!skillName) continue;
 
-    const tsMs = Date.parse(String(message.timestamp || entry.timestamp || ""));
+    const tsMs = toMs(message.timestamp ?? entry.timestamp);
     if (!Number.isFinite(tsMs)) continue;
 
     const outcome = message.isError ? "fail" : "success";
@@ -724,21 +738,32 @@ function collectSkillUsageMetrics(nowMs, options = {}) {
   );
 
   const recentFiles = listRecentSessionFiles(nowMs, 48 * 60 * 60 * 1000);
-  const sessionFileById = new Map();
+  const sessionFilesById = new Map();
   for (const file of recentFiles) {
     const base = path.basename(file.path);
     const m = base.match(/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i);
     if (!m) continue;
     const sessionId = String(m[1] || "").toLowerCase();
     if (!requiredSessionIds.has(sessionId)) continue;
-    if (!sessionFileById.has(sessionId)) {
-      sessionFileById.set(sessionId, file.path);
+    const bucket = sessionFilesById.get(sessionId) ?? [];
+    if (!bucket.includes(file.path)) {
+      bucket.push(file.path);
     }
+    sessionFilesById.set(sessionId, bucket.slice(0, 12));
   }
 
   const sessionResultIndexById = new Map();
-  for (const [sessionId, filePath] of sessionFileById.entries()) {
-    sessionResultIndexById.set(sessionId, buildSessionSkillResultIndex(filePath, knownSkillNameMap));
+  for (const [sessionId, filePaths] of sessionFilesById.entries()) {
+    const merged = new Map();
+    for (const filePath of filePaths) {
+      const partial = buildSessionSkillResultIndex(filePath, knownSkillNameMap);
+      for (const [toolCallId, rows] of partial.entries()) {
+        const bucket = merged.get(toolCallId) ?? [];
+        bucket.push(...rows);
+        merged.set(toolCallId, bucket);
+      }
+    }
+    sessionResultIndexById.set(sessionId, merged);
   }
 
   const factEvents = [];
@@ -841,7 +866,7 @@ function collectSkillUsageMetrics(nowMs, options = {}) {
     skills_top_24h_inferred: skillsTop,
     skill_calls_total_24h: total24h,
     skill_calls_collection_mode: sourceConnected ? "fact-event-structured" : "fact-only-not-connected",
-    skill_calls_files_scanned: sessionFileById.size,
+    skill_calls_files_scanned: [...sessionFilesById.values()].reduce((sum, files) => sum + files.length, 0),
     skill_calls_retained_24h: allEvents.length,
   };
 }
@@ -1082,7 +1107,7 @@ function collectSnapshot() {
   const knownSkillNames = new Set(skillsComponents.map((x) => x.name));
   const skillUsage = collectSkillUsageMetrics(nowMs, {
     logEntries: logsCtx.log_entries,
-    knownSkillNames,
+    knownSkillNames: [...knownSkillNames],
   });
   const skillTopReal = (Array.isArray(skillUsage?.skills_top_24h_inferred) ? skillUsage.skills_top_24h_inferred : [])
     .filter((x) => knownSkillNames.has(String(x?.name || '')))
