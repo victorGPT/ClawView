@@ -8,6 +8,13 @@
 5. 增加阈值冷启动校准机制（试运行后自动建议，人工确认生效）。  
 6. 为验证门槛补齐量化阈值（覆盖率、延迟、准确性）。
 
+### A.1 最新进展（2026-02-28）
+- 已完成 Step-2A/Step-2B：Skill Top24h 从结构化事实链路产出，不再使用推断占位。
+- `runtime/clawview-probe/probe.mjs` 已接入 fact-event 采集与去重，`skill_calls_collection_mode` 输出 `fact-event-structured`。
+- `runtime/insforge-functions/clawview-dashboard/index.mjs` 已改为映射 `skill_calls_total_24h` 与 `skill_calls_collection_mode`。
+- 已完成一次非空验收：`calls_24h=43`、`top` 非空（mobile top5 可见），并确认无事实时返回空榜。
+- 本轮回归修复：支持 numeric timestamp（秒/毫秒）与同 session 多 JSONL 文件聚合，避免事实事件被漏计。
+
 ---
 
 ### B. 范围与非范围（Scope / Non-Scope）
