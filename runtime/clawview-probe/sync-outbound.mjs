@@ -61,6 +61,9 @@ const ALLOWED_SNAPSHOT_FIELDS = [
   "api_collection_mode",
   "api_events_new_since_last",
   "api_events_retained",
+  "skills_total",
+  "cron_jobs_total",
+  "cron_jobs_enabled",
 ];
 
 function ensureDir() {
