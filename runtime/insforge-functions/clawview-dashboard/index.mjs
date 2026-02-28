@@ -182,12 +182,7 @@ function buildDashboardContract({ snapshot, events, profile }) {
         .filter((x) => x.name.length > 0)
     : [];
 
-  const skillTopFallback = skillComponents.slice(0, topN.skill).map((x) => ({
-    name: `${x.name}（接入中）`,
-    calls_24h: 0,
-  }));
-
-  const skillTop = skillTopFromSnapshot.length > 0 ? skillTopFromSnapshot.slice(0, topN.skill) : skillTopFallback;
+  const skillTop = skillTopFromSnapshot.slice(0, topN.skill);
 
   const totalSkillsValue = skillComponents.length > 0 ? skillComponents.length : asNumber(snapshot?.skills_total, 0);
   const healthySkillsValue =

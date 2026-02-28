@@ -125,7 +125,7 @@
 ### 3.3 子模块详情页（承载明细）
 - Skill/Cron/API/Error 四个子模块承载完整列表和明细分析。
 - TopN 之外的内容必须下钻查看。
-- Skill TopN 口径：优先使用 `skills_top_24h`（session toolCall/read SKILL.md 推断，best-effort）；若无事件则显示“（接入中）+0”占位并标注接入状态。
+- Skill TopN 口径：仅接受唯一事实源事件；无事实数据时显示 Gap（`--` / 数据未接入），不得使用推断占位。
 
 ---
 

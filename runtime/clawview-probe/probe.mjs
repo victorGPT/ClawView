@@ -513,68 +513,14 @@ function listRecentSessionFiles(nowMs, lookbackMs = 24 * 60 * 60 * 1000) {
 }
 
 function collectSkillUsageMetrics(nowMs) {
-  const last24hStart = nowMs - 24 * 60 * 60 * 1000;
-  const files = listRecentSessionFiles(nowMs, 30 * 60 * 60 * 1000);
-
-  const counts = new Map();
-  let callsTotal24h = 0;
-  let callsRetained24h = 0;
-
-  for (const file of files) {
-    let text = "";
-    try {
-      text = fs.readFileSync(file.path, "utf8");
-    } catch {
-      continue;
-    }
-
-    const lines = text.split(/\r?\n/).filter(Boolean);
-    for (const line of lines) {
-      if (!line.includes('"type":"message"')) continue;
-
-      let row;
-      try {
-        row = JSON.parse(line);
-      } catch {
-        continue;
-      }
-
-      if (row?.type !== 'message') continue;
-      const ts = Date.parse(String(row?.timestamp || row?.message?.timestamp || ''));
-      if (!Number.isFinite(ts) || ts < last24hStart || ts > nowMs) continue;
-
-      const msg = row?.message;
-      if (!msg || msg?.role !== 'assistant') continue;
-
-      const content = Array.isArray(msg?.content) ? msg.content : [];
-      for (const item of content) {
-        if (item?.type !== 'toolCall') continue;
-        if (String(item?.name || '') !== 'read') continue;
-
-        const args = item?.arguments || {};
-        const filePath = args.path || args.file_path || args.filePath || '';
-        const skillName = extractSkillNameFromPath(filePath);
-        if (!skillName) continue;
-
-        callsTotal24h += 1;
-        counts.set(skillName, (counts.get(skillName) || 0) + 1);
-      }
-    }
-  }
-
-  const top = [...counts.entries()]
-    .map(([name, calls_24h]) => ({ name, calls_24h }))
-    .sort((a, b) => b.calls_24h - a.calls_24h || a.name.localeCompare(b.name))
-    .slice(0, 10);
-
-  callsRetained24h = [...counts.values()].reduce((a, b) => a + b, 0);
-
+  // Fact-only mode: no inferred usage from session/tool-call heuristics.
+  // Keep empty until provider-native structured skill execution events are wired.
   return {
-    skills_top_24h_inferred: top,
-    skill_calls_total_24h: callsTotal24h,
-    skill_calls_collection_mode: 'sessions-toolcall-read-inferred',
-    skill_calls_files_scanned: files.length,
-    skill_calls_retained_24h: callsRetained24h,
+    skills_top_24h_inferred: [],
+    skill_calls_total_24h: 0,
+    skill_calls_collection_mode: 'fact-only-not-connected',
+    skill_calls_files_scanned: 0,
+    skill_calls_retained_24h: 0,
   };
 }
 
@@ -817,12 +763,7 @@ function collectSnapshot() {
     .filter((x) => knownSkillNames.has(String(x?.name || '')))
     .slice(0, 10)
     .map((x) => ({ name: String(x.name), calls_24h: Number(x.calls_24h || 0) }));
-  const skillsTop24h = skillTopReal.length > 0
-    ? skillTopReal
-    : skillsComponents.slice(0, 10).map((x) => ({
-        name: `${x.name}（接入中）`,
-        calls_24h: 0,
-      }));
+  const skillsTop24h = skillTopReal;
 
   const serviceStatusNow = gateway.gateway_rpc_ok ? (errors.errors_active_count > 0 ? "degraded" : "running") : "down";
   const dataFreshnessDelayMin = logsCtx.latest_log_ts_ms == null ? null : Math.max(0, Math.round((nowMs - logsCtx.latest_log_ts_ms) / 60000));
@@ -886,7 +827,7 @@ function collectSnapshot() {
     probe_version: "v1.2",
     probe_notes: [
       "API metrics use hook-triggered cursor incremental extraction from gateway logs",
-      "Skill Top24h prefers session toolCall(read SKILL.md) inference; fallback to placeholder when no events",
+      "Skill Top24h uses fact-only source; no inferred usage when facts are unavailable",
       "API metrics remain best-effort until provider-level structured API events are available",
       "p0_core_coverage_ratio is computed from probe-populated core fields",
     ],
