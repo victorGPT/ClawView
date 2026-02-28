@@ -14,6 +14,8 @@
 - `runtime/insforge-functions/clawview-dashboard/index.mjs` 已改为映射 `skill_calls_total_24h` 与 `skill_calls_collection_mode`。
 - 已完成一次非空验收：`calls_24h=43`、`top` 非空（mobile top5 可见），并确认无事实时返回空榜。
 - 本轮回归修复：支持 numeric timestamp（秒/毫秒）与同 session 多 JSONL 文件聚合，避免事实事件被漏计。
+- 本轮口径修正：`service_status_now` 改为“Gateway RPC + 异常重启 + 系统级硬故障”判定，不再由通用 warn/error 噪音直接降级；并同步 `openclaw_system_anomaly` 口径一致。
+- Step-C（进行中）：API summary 已切换为结构化 `api_fact_event`（metadata-only）链路，移除日志推断；新增 `api_unknown_rate_24h` 与隐私回归测试（email/token/bearer/cookie 命中即失败）。
 
 ---
 

@@ -19,9 +19,30 @@
 - 总数类指标必须由个体组件聚合得到（先个体，后总数）；禁止无来源直接写总数。
 
 ### 0.2 外发隐私边界（联网必选）
-- 仅允许外发白名单字段：计数、状态码、endpoint_group、耗时、时间戳。
+- 仅允许外发白名单字段：
+  - `ts`
+  - `provider`
+  - `method`
+  - `host`
+  - `path_template`
+  - `endpoint_group`
+  - `status_code`
+  - `latency_ms`
+  - `is_429`
+  - `is_failure`
+  - `dedupe_key`
+  - `request_id`（可选）
 - 禁止外发字段：消息正文、请求/响应 body、token、cookie、授权头、原始 URL query。
 - 出网前必须本地脱敏；传输必须 TLS。
+
+### 0.3 `service_status_now` 判定口径（Probe v1.3）
+- `down`：Gateway RPC 不可用。
+- `degraded`：满足任一条件：
+  1) `restart_unexpected_count_24h > 0`
+  2) `errors_critical_active_count > 0`（仅统计“系统级硬故障”指纹，如 gateway 启动失败、panic/OOM、端口占用、secrets reloader degraded）。
+- `running`：其余情况。
+
+> 说明：通用 warn/error 噪音（例如普通插件告警、工具调用 ENOENT 等）仅进入错误可见性指标（`error_top`、`errors_active_count`），不再直接把 `service_status_now` 拉成 `degraded`。
 
 ---
 

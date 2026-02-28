@@ -41,7 +41,19 @@ Out of scope:
 - Homepage must not fake numeric values for `Gap`.
 
 5. Privacy/export baseline:
-- Allowed outbound: counts/status code/endpoint_group/latency/timestamp
+- Allowed outbound (metadata-only):
+  - `ts`
+  - `provider`
+  - `method`
+  - `host`
+  - `path_template`
+  - `endpoint_group`
+  - `status_code`
+  - `latency_ms`
+  - `is_429`
+  - `is_failure`
+  - `dedupe_key`
+  - `request_id` (optional)
 - Forbidden outbound: message body/request body/response body/token/cookie/auth header/raw URL query
 
 ## 3. Endpoint
@@ -255,6 +267,12 @@ TopN behavior by `profile`:
       "display": "--",
       "note": "数据未接入"
     },
+    "api_unknown_rate_24h": {
+      "readiness": "Gap",
+      "value": null,
+      "display": "--",
+      "note": "数据未接入"
+    },
     "endpoint_group_top": {
       "readiness": "Gap",
       "top": [],
@@ -330,6 +348,10 @@ TopN behavior by `profile`:
 
 `service_status_now.value`:
 - `running | degraded | down`
+- 判定口径（Probe v1.3）：
+  - `down`: Gateway RPC 不可用
+  - `degraded`: `restart_unexpected_count_24h > 0` 或 `errors_critical_active_count > 0`
+  - `running`: 其余情况（通用 warn/error 不直接触发降级）
 
 ## 5. P0-Core Mapping (12)
 
@@ -380,4 +402,3 @@ Backend must satisfy before FE switch to real API:
 3. `meta.window.display` is always `Rolling 24h / Tokyo 当日`.
 4. `endpoint_group_top` never returns raw URL paths.
 5. `trace_id` exists in every non-200 error.
-
