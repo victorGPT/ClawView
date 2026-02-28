@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 const argv = process.argv.slice(2);
 
@@ -1312,7 +1313,13 @@ function printUsage() {
   console.log(`ClawView local probe\n\nUsage:\n  node probe.mjs --once\n  node probe.mjs --summarize\n  node probe.mjs [--interval-min 5] [--duration-min 15] [--out-dir <dir>]\n`);
 }
 
-(async () => {
+export const __test = {
+  toMs,
+  resolveSkillNameFromText,
+  buildSessionSkillResultIndex,
+};
+
+async function main() {
   if (hasFlag("--help") || hasFlag("-h")) {
     printUsage();
     process.exit(0);
@@ -1334,4 +1341,10 @@ function printUsage() {
   }
 
   await runLoop();
-})();
+}
+
+const entryPath = process.argv[1] ? path.resolve(process.argv[1]) : "";
+const selfPath = fileURLToPath(import.meta.url);
+if (entryPath === selfPath) {
+  main();
+}
