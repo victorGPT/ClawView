@@ -691,6 +691,19 @@ function collectSnapshot() {
   const api = collectApiMetrics(logsCtx.log_entries, nowMs);
   const restarts = collectRestartMetrics(logsCtx.log_entries, nowMs);
 
+  const skillItems = Array.isArray(skills?.skills) ? skills.skills : [];
+  const skillsComponents = skillItems.map((x) => ({
+    name: String(x?.name || "--"),
+    source: String(x?.source || "unknown"),
+    eligible: Boolean(x?.eligible),
+    disabled: Boolean(x?.disabled),
+  }));
+  const skillsHealthy = skillsComponents.filter((x) => x.eligible && !x.disabled).length;
+  const skillsTop24h = skillsComponents.slice(0, 10).map((x) => ({
+    name: `${x.name}（接入中）`,
+    calls_24h: 0,
+  }));
+
   const serviceStatusNow = gateway.gateway_rpc_ok ? (errors.errors_active_count > 0 ? "degraded" : "running") : "down";
   const dataFreshnessDelayMin = logsCtx.latest_log_ts_ms == null ? null : Math.max(0, Math.round((nowMs - logsCtx.latest_log_ts_ms) / 60000));
 
@@ -717,7 +730,10 @@ function collectSnapshot() {
     timezone: "Asia/Tokyo",
 
     // Base inventory
-    skills_total: Array.isArray(skills?.skills) ? skills.skills.length : 0,
+    skills_total: skillsComponents.length,
+    healthy_skills: skillsHealthy,
+    skills_components: skillsComponents,
+    skills_top_24h: skillsTop24h,
     channels_total: countConfiguredChannels(cfg),
     threads_active_24h_approx: countConfiguredThreadsApprox(cfg),
 

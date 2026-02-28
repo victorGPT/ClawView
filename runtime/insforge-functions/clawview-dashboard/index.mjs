@@ -163,6 +163,38 @@ function buildDashboardContract({ snapshot, events, profile }) {
   const nowIso = now.toISOString();
   const topN = getTopN(profile);
 
+  const skillComponents = Array.isArray(snapshot?.skills_components)
+    ? snapshot.skills_components
+        .map((x) => ({
+          name: String(x?.name || '').trim(),
+          eligible: Boolean(x?.eligible),
+          disabled: Boolean(x?.disabled),
+        }))
+        .filter((x) => x.name.length > 0)
+    : [];
+
+  const skillTopFromSnapshot = Array.isArray(snapshot?.skills_top_24h)
+    ? snapshot.skills_top_24h
+        .map((x) => ({
+          name: String(x?.name || '').trim(),
+          calls_24h: asNumber(x?.calls_24h ?? x?.calls24h, 0),
+        }))
+        .filter((x) => x.name.length > 0)
+    : [];
+
+  const skillTopFallback = skillComponents.slice(0, topN.skill).map((x) => ({
+    name: `${x.name}（接入中）`,
+    calls_24h: 0,
+  }));
+
+  const skillTop = skillTopFromSnapshot.length > 0 ? skillTopFromSnapshot.slice(0, topN.skill) : skillTopFallback;
+
+  const totalSkillsValue = skillComponents.length > 0 ? skillComponents.length : asNumber(snapshot?.skills_total, 0);
+  const healthySkillsValue =
+    skillComponents.length > 0
+      ? skillComponents.filter((x) => x.eligible && !x.disabled).length
+      : asNumber(snapshot?.healthy_skills ?? snapshot?.skills_healthy ?? snapshot?.skills_healthy_total, 0);
+
   const triggerSeries = events.length
     ? buildTenBins(events, now.getTime(), (row) => (row.kind === 'snapshot' ? 0 : 1))
     : buildTenBins(Array.isArray(snapshot?.history) ? snapshot.history : [], now.getTime());
@@ -233,20 +265,16 @@ function buildDashboardContract({ snapshot, events, profile }) {
     },
     skill_summary: {
       total_skills:
-        typeof snapshot?.skills_total === 'number'
-          ? metric('Derived', asNumber(snapshot?.skills_total, 0), String(asNumber(snapshot?.skills_total, 0)))
+        totalSkillsValue > 0 || typeof snapshot?.skills_total === 'number' || skillComponents.length > 0
+          ? metric('Derived', totalSkillsValue, String(totalSkillsValue))
           : metricGap(),
       healthy_skills:
-        typeof snapshot?.healthy_skills === 'number' || typeof snapshot?.skills_healthy === 'number' || typeof snapshot?.skills_healthy_total === 'number'
-          ? metric(
-              'Derived',
-              asNumber(snapshot?.healthy_skills ?? snapshot?.skills_healthy ?? snapshot?.skills_healthy_total, 0),
-              String(asNumber(snapshot?.healthy_skills ?? snapshot?.skills_healthy ?? snapshot?.skills_healthy_total, 0)),
-            )
+        (skillComponents.length > 0) || typeof snapshot?.healthy_skills === 'number' || typeof snapshot?.skills_healthy === 'number' || typeof snapshot?.skills_healthy_total === 'number'
+          ? metric('Derived', healthySkillsValue, String(healthySkillsValue))
           : metricGap(),
       calls_24h: metric('Derived', asNumber(snapshot?.cron_runs_24h_total, 0), String(asNumber(snapshot?.cron_runs_24h_total, 0))),
       calls_tokyo_today: metric('Derived', asNumber(snapshot?.cron_runs_today_tokyo_total, 0), String(asNumber(snapshot?.cron_runs_today_tokyo_total, 0))),
-      top: [],
+      top: skillTop,
     },
     cron_summary: {
       total_tasks:

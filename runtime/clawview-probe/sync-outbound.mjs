@@ -62,6 +62,9 @@ const ALLOWED_SNAPSHOT_FIELDS = [
   "api_events_new_since_last",
   "api_events_retained",
   "skills_total",
+  "healthy_skills",
+  "skills_components",
+  "skills_top_24h",
   "cron_jobs_total",
   "cron_jobs_enabled",
 ];
