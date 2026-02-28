@@ -48,6 +48,7 @@
 
 **Skill 模块分期（与 PRD 对齐）**
 - Phase 1（首发）：Skill 总数、模块简介、24h 调用总次数、TopN（默认 5，可配置 6）
+  - TopN 口径：优先 `session toolCall(read SKILL.md)` 推断（best-effort），无事件时回退占位并明确“数据接入中”。
 - Phase 2（增强）：全量 Skill 列表（分页/搜索）、单 Skill 趋势与错误率、调用明细
 
 **首页 TopN 展示条数规则（响应式）**

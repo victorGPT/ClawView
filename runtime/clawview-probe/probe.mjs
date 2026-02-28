@@ -466,6 +466,118 @@ function collectLogsContext() {
   };
 }
 
+function extractSkillNameFromPath(filePath) {
+  const normalized = String(filePath || "").replace(/\\/g, "/");
+  const m = normalized.match(/\/skills\/([^/]+)\/SKILL\.md$/i);
+  return m ? String(m[1] || "").trim() : null;
+}
+
+function listRecentSessionFiles(nowMs, lookbackMs = 24 * 60 * 60 * 1000) {
+  const root = path.join(os.homedir(), ".openclaw", "agents");
+  const threshold = nowMs - lookbackMs;
+  const files = [];
+
+  let agentDirs = [];
+  try {
+    agentDirs = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory());
+  } catch {
+    return files;
+  }
+
+  for (const dir of agentDirs) {
+    const sessionsDir = path.join(root, dir.name, "sessions");
+    let entries = [];
+    try {
+      entries = fs.readdirSync(sessionsDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      if (!entry.name.endsWith('.jsonl')) continue;
+      if (entry.name.includes('.deleted.') || entry.name.includes('.reset.')) continue;
+      const fullPath = path.join(sessionsDir, entry.name);
+      let stat;
+      try {
+        stat = fs.statSync(fullPath);
+      } catch {
+        continue;
+      }
+      if (!Number.isFinite(stat.mtimeMs) || stat.mtimeMs < threshold) continue;
+      files.push({ path: fullPath, mtimeMs: stat.mtimeMs });
+    }
+  }
+
+  return files.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, 240);
+}
+
+function collectSkillUsageMetrics(nowMs) {
+  const last24hStart = nowMs - 24 * 60 * 60 * 1000;
+  const files = listRecentSessionFiles(nowMs, 30 * 60 * 60 * 1000);
+
+  const counts = new Map();
+  let callsTotal24h = 0;
+  let callsRetained24h = 0;
+
+  for (const file of files) {
+    let text = "";
+    try {
+      text = fs.readFileSync(file.path, "utf8");
+    } catch {
+      continue;
+    }
+
+    const lines = text.split(/\r?\n/).filter(Boolean);
+    for (const line of lines) {
+      if (!line.includes('"type":"message"')) continue;
+
+      let row;
+      try {
+        row = JSON.parse(line);
+      } catch {
+        continue;
+      }
+
+      if (row?.type !== 'message') continue;
+      const ts = Date.parse(String(row?.timestamp || row?.message?.timestamp || ''));
+      if (!Number.isFinite(ts) || ts < last24hStart || ts > nowMs) continue;
+
+      const msg = row?.message;
+      if (!msg || msg?.role !== 'assistant') continue;
+
+      const content = Array.isArray(msg?.content) ? msg.content : [];
+      for (const item of content) {
+        if (item?.type !== 'toolCall') continue;
+        if (String(item?.name || '') !== 'read') continue;
+
+        const args = item?.arguments || {};
+        const filePath = args.path || args.file_path || args.filePath || '';
+        const skillName = extractSkillNameFromPath(filePath);
+        if (!skillName) continue;
+
+        callsTotal24h += 1;
+        counts.set(skillName, (counts.get(skillName) || 0) + 1);
+      }
+    }
+  }
+
+  const top = [...counts.entries()]
+    .map(([name, calls_24h]) => ({ name, calls_24h }))
+    .sort((a, b) => b.calls_24h - a.calls_24h || a.name.localeCompare(b.name))
+    .slice(0, 10);
+
+  callsRetained24h = [...counts.values()].reduce((a, b) => a + b, 0);
+
+  return {
+    skills_top_24h_inferred: top,
+    skill_calls_total_24h: callsTotal24h,
+    skill_calls_collection_mode: 'sessions-toolcall-read-inferred',
+    skill_calls_files_scanned: files.length,
+    skill_calls_retained_24h: callsRetained24h,
+  };
+}
+
 function toApiEvent(entry) {
   const ts = Date.parse(String(entry?.time || ""));
   if (!Number.isFinite(ts)) return null;
@@ -690,6 +802,7 @@ function collectSnapshot() {
   const logsCtx = collectLogsContext();
   const api = collectApiMetrics(logsCtx.log_entries, nowMs);
   const restarts = collectRestartMetrics(logsCtx.log_entries, nowMs);
+  const skillUsage = collectSkillUsageMetrics(nowMs);
 
   const skillItems = Array.isArray(skills?.skills) ? skills.skills : [];
   const skillsComponents = skillItems.map((x) => ({
@@ -699,10 +812,17 @@ function collectSnapshot() {
     disabled: Boolean(x?.disabled),
   }));
   const skillsHealthy = skillsComponents.filter((x) => x.eligible && !x.disabled).length;
-  const skillsTop24h = skillsComponents.slice(0, 10).map((x) => ({
-    name: `${x.name}（接入中）`,
-    calls_24h: 0,
-  }));
+  const knownSkillNames = new Set(skillsComponents.map((x) => x.name));
+  const skillTopReal = (Array.isArray(skillUsage?.skills_top_24h_inferred) ? skillUsage.skills_top_24h_inferred : [])
+    .filter((x) => knownSkillNames.has(String(x?.name || '')))
+    .slice(0, 10)
+    .map((x) => ({ name: String(x.name), calls_24h: Number(x.calls_24h || 0) }));
+  const skillsTop24h = skillTopReal.length > 0
+    ? skillTopReal
+    : skillsComponents.slice(0, 10).map((x) => ({
+        name: `${x.name}（接入中）`,
+        calls_24h: 0,
+      }));
 
   const serviceStatusNow = gateway.gateway_rpc_ok ? (errors.errors_active_count > 0 ? "degraded" : "running") : "down";
   const dataFreshnessDelayMin = logsCtx.latest_log_ts_ms == null ? null : Math.max(0, Math.round((nowMs - logsCtx.latest_log_ts_ms) / 60000));
@@ -734,6 +854,10 @@ function collectSnapshot() {
     healthy_skills: skillsHealthy,
     skills_components: skillsComponents,
     skills_top_24h: skillsTop24h,
+    skill_calls_total_24h: skillUsage.skill_calls_total_24h,
+    skill_calls_collection_mode: skillUsage.skill_calls_collection_mode,
+    skill_calls_files_scanned: skillUsage.skill_calls_files_scanned,
+    skill_calls_retained_24h: skillUsage.skill_calls_retained_24h,
     channels_total: countConfiguredChannels(cfg),
     threads_active_24h_approx: countConfiguredThreadsApprox(cfg),
 
@@ -759,9 +883,10 @@ function collectSnapshot() {
     p0_core_filled: p0Filled,
     p0_core_total: p0Total,
 
-    probe_version: "v1.1",
+    probe_version: "v1.2",
     probe_notes: [
       "API metrics use hook-triggered cursor incremental extraction from gateway logs",
+      "Skill Top24h prefers session toolCall(read SKILL.md) inference; fallback to placeholder when no events",
       "API metrics remain best-effort until provider-level structured API events are available",
       "p0_core_coverage_ratio is computed from probe-populated core fields",
     ],

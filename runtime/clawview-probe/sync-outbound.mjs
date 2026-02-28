@@ -65,6 +65,10 @@ const ALLOWED_SNAPSHOT_FIELDS = [
   "healthy_skills",
   "skills_components",
   "skills_top_24h",
+  "skill_calls_total_24h",
+  "skill_calls_collection_mode",
+  "skill_calls_files_scanned",
+  "skill_calls_retained_24h",
   "cron_jobs_total",
   "cron_jobs_enabled",
 ];
